@@ -13,6 +13,7 @@ const PROFILES_DATA_DIR = path.join(LEGACY_DATA_DIR, 'profiles');
 const SCRAPE_SCRIPT = path.join(ROOT, 'scripts', 'scrape-immobilier.mjs');
 
 const PORT = Number(process.env.PORT || 8787);
+const DEFAULT_PROFILE = sanitizeProfileValue(process.env.APARTMENT_PROFILE || process.env.APART_PROFILE || 'vaud-3-pieces');
 const scanAllJobs = new Map();
 
 const MIME = {
@@ -29,9 +30,13 @@ const MIME = {
   '.svg': 'image/svg+xml'
 };
 
-function sanitizeProfile(value = 'fribourg') {
-  const clean = String(value || 'fribourg').trim().toLowerCase();
-  return /^[a-z0-9-]+$/.test(clean) ? clean : 'fribourg';
+function sanitizeProfileValue(value, fallback = 'vaud-3-pieces') {
+  const clean = String(value || fallback).trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(clean) ? clean : fallback;
+}
+
+function sanitizeProfile(value = DEFAULT_PROFILE) {
+  return sanitizeProfileValue(value, DEFAULT_PROFILE);
 }
 
 function profilePaths(profile) {
@@ -140,7 +145,7 @@ async function ensureProfileStorage(profile) {
 }
 
 function getProfileFromRequest(u) {
-  return sanitizeProfile(u.searchParams.get('profile') || 'fribourg');
+  return sanitizeProfile(u.searchParams.get('profile') || DEFAULT_PROFILE);
 }
 
 async function sendJson(res, status, payload) {
@@ -571,7 +576,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/dashboard' || u.pathname === '/dashboard/')) {
-    return serveFile(res, path.join(DASHBOARD_DIR, 'home.html'));
+    res.writeHead(302, { location: `/${DEFAULT_PROFILE}/dashboard` });
+    return res.end();
   }
 
   const rootProfileMatch = u.pathname.match(/^\/([a-z0-9-]+)\/?$/i);

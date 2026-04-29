@@ -20,7 +20,6 @@
         </div>
 
         <div class="actions">
-          <select id="profile-switcher" class="profile-switcher" aria-label="Changer de profil"></select>
           <button id="refresh" class="btn ghost">Rafraîchir</button>
           <button id="scan" class="btn primary">Scanner</button>
         </div>
@@ -28,30 +27,7 @@
 
       <pre id="scan-output" class="scan-output hidden"></pre>
 
-      <section class="cards" id="cards"></section>
-
-      <section class="control-bar">
-        <label>
-          Filtre
-          <select id="priority-filter">
-            <option value="all">Toutes</option>
-            <option value="top">Priorité A / A★</option>
-            <option value="transition">Priorité B (studio / 1.5)</option>
-            <option value="pearl">Perles ⭐</option>
-            <option value="direct">Régie directe</option>
-          </select>
-        </label>
-
-        <label>
-          Trier
-          <select id="sort-by">
-            <option value="score">Score</option>
-            <option value="price">Loyer</option>
-            <option value="area">Zone</option>
-            <option value="date">Date de publication</option>
-          </select>
-        </label>
-
+      <section class="search-bar">
         <label class="search-wrap">
           Recherche
           <input id="search-box" type="search" placeholder="adresse, type, zone…" />
@@ -79,7 +55,6 @@
                   <th>Bien</th>
                   <th>Loyer total</th>
                   <th>Publié</th>
-                  <th>Distance travail</th>
                   <th>Statut</th>
                   <th>Notes</th>
                   <th>Action</th>

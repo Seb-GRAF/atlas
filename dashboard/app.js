@@ -1,4 +1,3 @@
-const cardsEl = document.getElementById('cards');
 const rowsEl = document.getElementById('rows');
 const mobileRowsEl = document.getElementById('mobile-rows');
 const kanbanEl = document.getElementById('kanban-board');
@@ -6,8 +5,6 @@ const subEl = document.getElementById('sub');
 const refreshBtn = document.getElementById('refresh');
 const scanBtn = document.getElementById('scan');
 const scanOut = document.getElementById('scan-output');
-const filterEl = document.getElementById('priority-filter');
-const sortEl = document.getElementById('sort-by');
 const searchEl = document.getElementById('search-box');
 const tabTableEl = document.getElementById('tab-table');
 const tabKanbanEl = document.getElementById('tab-kanban');
@@ -16,72 +13,20 @@ const panelKanbanEl = document.getElementById('panel-kanban');
 const heroTitleEl = document.querySelector('.hero h1');
 const zonesEl = document.getElementById('zones');
 
-const profileSwitcherEl = document.getElementById('profile-switcher');
-
 const PROFILE = (() => {
   const parts = window.location.pathname.split('/').filter(Boolean);
   if (parts.length >= 2 && parts[1] === 'dashboard') return parts[0];
-  return new URLSearchParams(window.location.search).get('profile') || 'fribourg';
+  return new URLSearchParams(window.location.search).get('profile') || 'vaud-3-pieces';
 })();
 
 const PROFILE_TITLES = {
   vevey: 'Vevey et environs',
   fribourg: 'Fribourg et environs',
-  'saint-maurice': 'Saint-Maurice (VS)'
+  'saint-maurice': 'Saint-Maurice (VS)',
+  'vaud-3-pieces': 'Vaud 3 pièces'
 };
 
 let profileAreasText = '';
-
-async function loadProfileSwitcher() {
-  try {
-    const res = await fetch('/api/profiles');
-    const { profiles } = await res.json();
-    if (!profileSwitcherEl || !Array.isArray(profiles)) return;
-
-    profileSwitcherEl.innerHTML = '';
-    for (const p of profiles) {
-      const opt = document.createElement('option');
-      opt.value = p.slug;
-      opt.textContent = p.label || p.name;
-      if (p.slug === PROFILE) opt.selected = true;
-      profileSwitcherEl.appendChild(opt);
-    }
-
-    // Update title/zones from profile data
-    const current = profiles.find((p) => p.slug === PROFILE);
-    if (current) {
-      if (heroTitleEl) heroTitleEl.textContent = PROFILE_TITLES[PROFILE] || current.name;
-      profileAreasText = current.areas ? `Zones: ${current.areas}` : '';
-      if (zonesEl) zonesEl.textContent = profileAreasText;
-    }
-
-    // Add "manage" option at the end
-    const manageOpt = document.createElement('option');
-    manageOpt.value = '__manage__';
-    manageOpt.textContent = '⚙ Gérer les profils…';
-    profileSwitcherEl.appendChild(manageOpt);
-
-    profileSwitcherEl.addEventListener('change', () => {
-      const selected = profileSwitcherEl.value;
-      if (selected === '__manage__') {
-        window.location.href = '/';
-        return;
-      }
-      window.location.href = `/${encodeURIComponent(selected)}/dashboard`;
-    });
-  } catch {
-    // Fallback: just show current profile
-    if (profileSwitcherEl) {
-      const opt = document.createElement('option');
-      opt.value = PROFILE;
-      opt.textContent = PROFILE_TITLES[PROFILE] || PROFILE;
-      opt.selected = true;
-      profileSwitcherEl.appendChild(opt);
-    }
-  }
-}
-
-loadProfileSwitcher();
 
 if (heroTitleEl) {
   heroTitleEl.textContent = PROFILE_TITLES[PROFILE] || `Suivi ${PROFILE}`;
@@ -109,7 +54,6 @@ let scorePopoverEl = null;
 let scorePopoverHideTimer = null;
 let activeScoreTrigger = null;
 let scorePopoverGlobalBound = false;
-let activeCardFilter = 'all';
 
 function money(v) {
   if (v == null) return 'n/a';
@@ -161,72 +105,6 @@ function publishedTitle(item) {
   if (meta.days == null) return 'Date de parution indisponible';
   if (meta.approximate) return `Découverte le ${shortWhen(meta.iso)} (estimation)`;
   return `Publié le ${shortWhen(meta.iso)}`;
-}
-
-function distanceLabel(item) {
-  if (item.distanceKm != null && Number.isFinite(Number(item.distanceKm))) {
-    return `${Number(item.distanceKm).toFixed(1)} km`;
-  }
-  if (item.distanceText) return String(item.distanceText);
-  return 'n/a';
-}
-
-function distanceBadge(item) {
-  const span = document.createElement('span');
-  span.className = 'distance-chip';
-  span.textContent = distanceLabel(item);
-  span.title = item.distanceFromWorkAddress
-    ? `Distance estimée à vol d'oiseau depuis ${item.distanceFromWorkAddress}`
-    : "Distance estimée à vol d'oiseau depuis le lieu de travail";
-  return span;
-}
-
-function travelMinutesLabel(item, mode) {
-  const minutes = mode === 'drive' ? item.driveMinutes : item.transitMinutes;
-  const text = mode === 'drive' ? item.driveText : item.transitText;
-
-  if (minutes != null && Number.isFinite(Number(minutes))) {
-    return `${Math.round(Number(minutes))} min`;
-  }
-
-  if (text) return String(text);
-  return 'n/a';
-}
-
-function createTravelCell(item) {
-  const wrap = document.createElement('div');
-  wrap.className = 'travel-cell';
-
-  wrap.appendChild(distanceBadge(item));
-
-  const lines = document.createElement('div');
-  lines.className = 'travel-lines';
-  lines.innerHTML = `
-    <span>🚗 ${travelMinutesLabel(item, 'drive')}</span>
-    <span>🚌 ${travelMinutesLabel(item, 'transit')}</span>
-  `;
-
-  wrap.appendChild(lines);
-  return wrap;
-}
-
-function travelInlineLabel(item) {
-  return `Travail: ${distanceLabel(item)} · 🚗 ${travelMinutesLabel(item, 'drive')} · 🚌 ${travelMinutesLabel(item, 'transit')}`;
-}
-
-function card(label, value, key = 'all') {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'card card-filter';
-  if (activeCardFilter === key) button.classList.add('active');
-
-  button.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>`;
-  button.addEventListener('click', () => {
-    activeCardFilter = activeCardFilter === key ? 'all' : key;
-    renderAll(latestState);
-  });
-
-  return button;
 }
 
 async function updateStatus(id, status, notes) {
@@ -382,14 +260,16 @@ function escapeHtml(value = '') {
 }
 
 function scoreLines(item) {
-  if (Array.isArray(item.scoreBreakdown) && item.scoreBreakdown.length) return item.scoreBreakdown;
+  const hideDistanceReasons = (lines) => lines.filter((x) => !/^Trajet\b/i.test(String(x).trim()));
+  if (Array.isArray(item.scoreBreakdown) && item.scoreBreakdown.length) return hideDistanceReasons(item.scoreBreakdown);
   if (!item.scoreTooltip) return [];
 
   return String(item.scoreTooltip)
     .split(/[|·]/)
     .map((x) => x.trim())
     .filter(Boolean)
-    .filter((x) => !/^score\s*:/i.test(x));
+    .filter((x) => !/^score\s*:/i.test(x))
+    .filter((x) => !/^Trajet\b/i.test(x));
 }
 
 function encodeScorePayload(item) {
@@ -542,42 +422,17 @@ function scoreMiniHtml(item) {
   return `<span class="score-mini score-trigger" data-score-payload="${encodeScorePayload(item).replace(/"/g, '&quot;')}" tabindex="0" role="button" aria-label="Détails du score ${item.score ?? 'n/a'}"><span class="score-pill">${item.score ?? '-'}</span><span class="score-track"><span class="score-fill" style="width:${scorePercent(item)}%"></span></span></span>`;
 }
 
-function matchesCardFilter(item, key) {
-  if (key === 'all') return true;
-  if (key === 'top') return !item.isRemoved && String(item.priority || '').startsWith('A');
-  if (key === 'pearl') return !item.isRemoved && !!item.isPearl;
-  if (key === 'transition') return !item.isRemoved && (String(item.priority || '') === 'B' || (item.rooms ?? 0) < 2);
-  if (key === 'urgent') return !item.isRemoved && getUrgency(item).level === 'high';
-  if (key === 'direct') {
-    const stage = String(item.listingStage || '').toLowerCase();
-    return !item.isRemoved && (stage === 'early_market' || stage === 'off_market');
-  }
-  if (key === 'new') return !item.isRemoved && isNewToday(item);
-  if (key === 'removed') return !!item.isRemoved;
-  return true;
+function listingDateMs(item) {
+  const iso = item.publishedAt || item.firstSeenAt || item.lastSeenAt || item.updatedAt;
+  if (!iso) return 0;
+  const ts = new Date(iso).getTime();
+  return Number.isFinite(ts) ? ts : 0;
 }
 
 function applyFilterAndSort(items) {
-  const mode = filterEl.value;
-  const sortBy = sortEl.value;
   const q = (searchEl.value || '').trim().toLowerCase();
 
-  let out = [...items].filter((item) => {
-    if (mode === 'top') {
-      return !item.isRemoved && String(item.priority || '').startsWith('A');
-    }
-    if (mode === 'transition') {
-      return !item.isRemoved && (String(item.priority || '') === 'B' || (item.rooms ?? 0) < 2);
-    }
-    if (mode === 'pearl') {
-      return !item.isRemoved && !!item.isPearl;
-    }
-    if (mode === 'direct') {
-      const stage = String(item.listingStage || '').toLowerCase();
-      return !item.isRemoved && (stage === 'early_market' || stage === 'off_market');
-    }
-    return true;
-  });
+  let out = [...items];
 
   if (q) {
     out = out.filter((item) => {
@@ -586,28 +441,12 @@ function applyFilterAndSort(items) {
     });
   }
 
-  if (activeCardFilter !== 'all') {
-    out = out.filter((item) => matchesCardFilter(item, activeCardFilter));
-  }
-
   out.sort((a, b) => {
-    // Pinned items always first
-    const aPin = a.pinned ? 1 : 0;
-    const bPin = b.pinned ? 1 : 0;
-    if (aPin !== bPin) return bPin - aPin;
-
     const aGrey = (a.isRemoved || isRefused(a)) ? 1 : 0;
     const bGrey = (b.isRemoved || isRefused(b)) ? 1 : 0;
     if (aGrey !== bGrey) return aGrey - bGrey;
 
-    if (sortBy === 'price') return (a.totalChf || 999999) - (b.totalChf || 999999);
-    if (sortBy === 'area') return String(a.area || '').localeCompare(String(b.area || ''), 'fr-CH');
-    if (sortBy === 'date') {
-      const aDays = publishedMeta(a).days ?? Infinity;
-      const bDays = publishedMeta(b).days ?? Infinity;
-      return aDays - bDays;
-    }
-    return (b.score || 0) - (a.score || 0);
+    return listingDateMs(b) - listingDateMs(a) || (b.score || 0) - (a.score || 0);
   });
 
   return out;
@@ -774,7 +613,7 @@ function renderDesktop(listings) {
 
   if (!listings.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="10"><div class="empty">Aucune annonce ne correspond aux filtres.</div></td>`;
+    tr.innerHTML = `<td colspan="9"><div class="empty">Aucune annonce ne correspond à la recherche.</div></td>`;
     rowsEl.appendChild(tr);
     return;
   }
@@ -803,9 +642,6 @@ function renderDesktop(listings) {
     const tdPublished = document.createElement('td');
     tdPublished.textContent = publishedLabel(item);
     tdPublished.title = publishedTitle(item);
-
-    const tdDistance = document.createElement('td');
-    tdDistance.appendChild(createTravelCell(item));
 
     const tdStatus = document.createElement('td');
     const select = createStatusSelect(item);
@@ -857,7 +693,7 @@ function renderDesktop(listings) {
     tdAction.appendChild(actionCell);
 
     if (item.pinned) tr.classList.add('row-pinned');
-    tr.append(tdPriority, tdScore, tdImage, tdInfo, tdPrice, tdPublished, tdDistance, tdStatus, tdNotes, tdAction);
+    tr.append(tdPriority, tdScore, tdImage, tdInfo, tdPrice, tdPublished, tdStatus, tdNotes, tdAction);
     rowsEl.appendChild(tr);
   }
 }
@@ -942,7 +778,6 @@ function renderKanban(listings) {
           </div>
           <a href="${item.url}" target="_blank" rel="noreferrer" class="k-title">${item.objectType || item.title}</a>
           <div class="k-sub">${item.area || '-'} · ${item.address || ''}${sourceMetaHtml(item) ? ` · ${sourceMetaHtml(item)}` : ''}</div>
-          <div class="k-distance">${travelInlineLabel(item)}</div>
           <div class="k-sub">Publié: ${publishedLabel(item)}</div>
           ${stateBadgesHtml(item)}
           <div class="k-bottom"></div>
@@ -1030,7 +865,7 @@ function renderMobile(listings) {
   mobileRowsEl.innerHTML = '';
 
   if (!listings.length) {
-    mobileRowsEl.innerHTML = '<div class="empty">Aucune annonce ne correspond aux filtres.</div>';
+    mobileRowsEl.innerHTML = '<div class="empty">Aucune annonce ne correspond à la recherche.</div>';
     return;
   }
 
@@ -1051,7 +886,6 @@ function renderMobile(listings) {
         <div class="mobile-meta">
           <div>${item.address || ''}</div>
           <div>${item.area || '-'} · ${money(item.totalChf)}${sourceMetaHtml(item) ? ` · ${sourceMetaHtml(item)}` : ''}</div>
-          <div>${travelInlineLabel(item)}</div>
           <div>Publié: ${publishedLabel(item)}</div>
           <div>${item.priceRaw || ''}</div>
           ${stateBadgesHtml(item)}
@@ -1136,36 +970,9 @@ function renderMobile(listings) {
   }
 }
 
-function renderCards(listings, latest) {
-  cardsEl.innerHTML = '';
-
-  const top = listings.filter((x) => String(x.priority || '').startsWith('A') && !x.isRemoved).length;
-  const pearls = listings.filter((x) => !!x.isPearl && !x.isRemoved).length;
-  const priorityB = listings.filter((x) => (String(x.priority || '') === 'B' || (x.rooms ?? 0) < 2) && !x.isRemoved).length;
-  const urgent = listings.filter((x) => getUrgency(x).level === 'high' && !x.isRemoved).length;
-  const removed = listings.filter((x) => !!x.isRemoved).length;
-  const news = listings.filter((x) => isNewToday(x) && !x.isRemoved).length;
-
-  const direct = listings.filter((x) => {
-    const stage = String(x.listingStage || '').toLowerCase();
-    return !x.isRemoved && (stage === 'early_market' || stage === 'off_market');
-  }).length;
-
-  cardsEl.append(
-    card('Annonces visibles', listings.length, 'all'),
-    card('Priorité haute', top, 'top'),
-    card('Perles ⭐', pearls, 'pearl'),
-    card('Régie directe', direct, 'direct'),
-    card('Urgentes', urgent, 'urgent'),
-    card('Nouvelles', news, 'new'),
-    card('Retirées', removed, 'removed')
-  );
-}
-
 function renderAll(latest) {
   hideScorePopover();
   const filtered = applyFilterAndSort(allListings);
-  renderCards(allListings, latest);
   renderKanban(filtered);
   renderDesktop(filtered);
   renderMobile(filtered);
@@ -1199,18 +1006,7 @@ async function load() {
 }
 
 refreshBtn.addEventListener('click', load);
-filterEl.addEventListener('change', () => renderAll(latestState));
-sortEl.addEventListener('change', () => {
-  localStorage.setItem('apartment-search-sort', sortEl.value);
-  renderAll(latestState);
-});
 searchEl.addEventListener('input', () => renderAll(latestState));
-
-// Restaurer le tri depuis localStorage au chargement
-const savedSort = localStorage.getItem('apartment-search-sort');
-if (savedSort && sortEl.querySelector(`option[value="${savedSort}"]`)) {
-  sortEl.value = savedSort;
-}
 
 scanBtn.addEventListener('click', async () => {
   scanBtn.disabled = true;

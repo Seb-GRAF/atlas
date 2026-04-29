@@ -11,11 +11,12 @@ const ROOT = path.resolve(__dirname, '..');
 const LEGACY_DATA_DIR = path.join(ROOT, 'data');
 const PROFILES_DATA_DIR = path.join(LEGACY_DATA_DIR, 'profiles');
 const DEFAULT_WORK_ADDRESS = 'Gare de Fribourg, 1700 Fribourg, Suisse';
+const DEFAULT_PROFILE = 'vaud-3-pieces';
 const TRAVEL_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
-function sanitizeProfile(value = 'fribourg') {
-  const clean = String(value || 'fribourg').trim().toLowerCase();
-  return /^[a-z0-9-]+$/.test(clean) ? clean : 'fribourg';
+function sanitizeProfile(value = DEFAULT_PROFILE) {
+  const clean = String(value || DEFAULT_PROFILE).trim().toLowerCase();
+  return /^[a-z0-9-]+$/.test(clean) ? clean : DEFAULT_PROFILE;
 }
 
 function parseProfileFromArgv(argv = process.argv.slice(2)) {
@@ -25,7 +26,7 @@ function parseProfileFromArgv(argv = process.argv.slice(2)) {
       return arg.slice('--profile='.length);
     }
     if (arg === '--profile') {
-      return argv[i + 1] || 'fribourg';
+      return argv[i + 1] || DEFAULT_PROFILE;
     }
   }
   return null;
@@ -43,7 +44,7 @@ function profilePaths(profile) {
   };
 }
 
-const PROFILE = sanitizeProfile(process.env.APART_PROFILE || parseProfileFromArgv() || 'fribourg');
+const PROFILE = sanitizeProfile(process.env.APART_PROFILE || process.env.APARTMENT_PROFILE || parseProfileFromArgv() || DEFAULT_PROFILE);
 const {
   dataDir: DATA_DIR,
   configPath: CONFIG_PATH,
@@ -482,25 +483,18 @@ function computeScore(item, config) {
     reasons.push('Zone: +4 (Corsier-sur-Vevey)');
   }
 
-  const transit = toPositiveNumber(item.transitMinutes);
-  const drive = toPositiveNumber(item.driveMinutes);
-  const referenceTravel = transit ?? drive;
-
-  if (referenceTravel != null) {
-    const over = Math.max(0, referenceTravel - 30);
-    const malus = Math.floor(over / 5);
-
-    if (malus > 0) {
-      score -= malus;
-      reasons.push(`Trajet Liip: -${malus} (${Math.round(referenceTravel)} min, -1 pt / 5 min au-delà de 30)`);
-    } else {
-      reasons.push(`Trajet Liip: +0 (${Math.round(referenceTravel)} min)`);
-    }
-  } else {
-    reasons.push('Trajet Liip: 0 (durée inconnue)');
-  }
-
   return { score, reasons };
+}
+
+function clearDistanceFields(item) {
+  item.distanceKm = null;
+  item.distanceText = '';
+  item.distanceComputed = false;
+  item.distanceFromWorkAddress = '';
+  item.driveMinutes = null;
+  item.driveText = '';
+  item.transitMinutes = null;
+  item.transitText = '';
 }
 
 function derivePriority(item, config) {
@@ -2682,15 +2676,6 @@ async function main() {
 
   const missingScansBeforeRemoved = Math.max(1, Number(config.filters?.missingScansBeforeRemoved ?? 2));
 
-  const workAddress =
-    config.preferences?.workplaceAddress ||
-    config.preferences?.workAddress ||
-    DEFAULT_WORK_ADDRESS;
-
-  const geocodeCache = await readJsonSafe(GEOCODE_CACHE_PATH, {});
-  const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
-  const workCoords = await geocodeAddress(workAddress, geocodeCache);
-
   const previousLatest = await readJsonSafe(LATEST_PATH, { all: [] });
   const prevIds = new Set((previousLatest.all || []).map((x) => String(x.id)));
 
@@ -2853,30 +2838,11 @@ async function main() {
         item.entryDateFetched = Boolean(item.entryDateText);
       }
 
-      const distanceMeta = await computeDistanceFromWork(item, workCoords, geocodeCache);
-      item.distanceKm = distanceMeta.distanceKm;
-      item.distanceText = distanceMeta.distanceText;
-      item.distanceComputed = distanceMeta.computed;
-      item.distanceFromWorkAddress = workAddress;
-
-      const driveMinutes = await fetchDrivingMinutes(workCoords, distanceMeta.listingCoords, routeCache);
-      const transitMinutes = await fetchTransitMinutes(workAddress, distanceMeta.listingAddress, routeCache);
-
-      item.driveMinutes = toDurationMinutesOrNull(driveMinutes);
-      item.driveText = item.driveMinutes != null ? `${Math.round(item.driveMinutes)} min` : '';
-      item.transitMinutes = toDurationMinutesOrNull(transitMinutes);
-      item.transitText = item.transitMinutes != null ? `${Math.round(item.transitMinutes)} min` : '';
+      clearDistanceFields(item);
     } else {
       item.entryDateText = null;
       item.entryDateFetched = false;
-      item.distanceKm = null;
-      item.distanceText = '';
-      item.distanceComputed = false;
-      item.distanceFromWorkAddress = workAddress;
-      item.driveMinutes = null;
-      item.driveText = '';
-      item.transitMinutes = null;
-      item.transitText = '';
+      clearDistanceFields(item);
     }
 
     if (!item.display) {
@@ -2899,34 +2865,19 @@ async function main() {
       const apiProvidedDate = isStrictEntryDate(item.entryDateText) ? item.entryDateText : null;
       const entryDateText = item.entryDateFetched ? apiProvidedDate : previousValidDate;
 
-      const distanceKm = item.distanceComputed ? item.distanceKm : existing.distanceKm ?? null;
-      const distanceText = item.distanceComputed
-        ? item.distanceText || ''
-        : existing.distanceText || (existing.distanceKm != null ? `${Number(existing.distanceKm).toFixed(1)} km` : '');
-
-      const driveMinutes = toDurationMinutesOrNull(item.driveMinutes)
-        ?? toDurationMinutesOrNull(existing.driveMinutes);
-      const driveText = driveMinutes != null
-        ? `${Math.round(driveMinutes)} min`
-        : sanitizeTravelText(existing.driveText || '');
-
-      const transitMinutes = toDurationMinutesOrNull(item.transitMinutes)
-        ?? toDurationMinutesOrNull(existing.transitMinutes);
-      const transitText = transitMinutes != null
-        ? `${Math.round(transitMinutes)} min`
-        : sanitizeTravelText(existing.transitText || '');
-
       merged.push({
         ...existing,
         ...item,
         pinned: !!existing.pinned,
         entryDateText,
-        distanceKm,
-        distanceText,
-        driveMinutes,
-        driveText,
-        transitMinutes,
-        transitText,
+        distanceKm: null,
+        distanceText: '',
+        driveMinutes: null,
+        driveText: '',
+        transitMinutes: null,
+        transitText: '',
+        distanceComputed: false,
+        distanceFromWorkAddress: '',
         publishedAt: item.publishedAt || existing.publishedAt || null,
         status: normalizeStatus(existing.status || 'À contacter'),
         notes: mergeNotesWithEntryDate(existing.notes || '', entryDateText),
@@ -3105,38 +3056,17 @@ async function main() {
         continue;
       }
 
-      let distanceKm = toNumberOrNull(old.distanceKm);
-      let distanceText = old.distanceText || (distanceKm != null ? `${distanceKm.toFixed(1)} km` : '');
-      let driveMinutes = toDurationMinutesOrNull(old.driveMinutes);
-      let transitMinutes = toDurationMinutesOrNull(old.transitMinutes);
-
-      if (refreshed.display !== false && (!shouldRemove || driveMinutes == null || transitMinutes == null || distanceKm == null)) {
-        const distanceMeta = await computeDistanceFromWork(old, workCoords, geocodeCache);
-
-        if (distanceMeta.computed) {
-          distanceKm = distanceMeta.distanceKm;
-          distanceText = distanceMeta.distanceText;
-
-          if (driveMinutes == null) {
-            driveMinutes = toDurationMinutesOrNull(await fetchDrivingMinutes(workCoords, distanceMeta.listingCoords, routeCache));
-          }
-
-          if (transitMinutes == null) {
-            transitMinutes = toDurationMinutesOrNull(await fetchTransitMinutes(workAddress, distanceMeta.listingAddress, routeCache));
-          }
-        }
-      }
-
       merged.push({
         ...old,
         ...refreshed,
-        distanceKm,
-        distanceText,
-        driveMinutes,
-        driveText: driveMinutes != null ? `${Math.round(driveMinutes)} min` : sanitizeTravelText(old.driveText || ''),
-        transitMinutes,
-        transitText: transitMinutes != null ? `${Math.round(transitMinutes)} min` : sanitizeTravelText(old.transitText || ''),
-        distanceFromWorkAddress: old.distanceFromWorkAddress || workAddress,
+        distanceKm: null,
+        distanceText: '',
+        driveMinutes: null,
+        driveText: '',
+        transitMinutes: null,
+        transitText: '',
+        distanceComputed: false,
+        distanceFromWorkAddress: '',
         status: normalizeStatus(old.status),
         active: !shouldRemove,
         isRemoved: shouldRemove,
@@ -3195,8 +3125,6 @@ async function main() {
 
   await fs.writeFile(TRACKER_PATH, JSON.stringify(newTracker, null, 2));
   await fs.writeFile(LATEST_PATH, JSON.stringify(latest, null, 2));
-  await fs.writeFile(GEOCODE_CACHE_PATH, JSON.stringify(geocodeCache, null, 2));
-  await fs.writeFile(ROUTE_CACHE_PATH, JSON.stringify(routeCache, null, 2));
 
   console.log(makeSummary(latest));
 }

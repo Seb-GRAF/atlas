@@ -613,7 +613,7 @@ function renderDesktop(listings) {
 
   if (!listings.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="9"><div class="empty">Aucune annonce ne correspond à la recherche.</div></td>`;
+    tr.innerHTML = `<td colspan="8"><div class="empty">Aucune annonce ne correspond à la recherche.</div></td>`;
     rowsEl.appendChild(tr);
     return;
   }
@@ -623,9 +623,6 @@ function renderDesktop(listings) {
     if (item.isRemoved) tr.classList.add('row-removed');
     if (isRefused(item)) tr.classList.add('row-refused');
     if (isNewToday(item) && !item.isRemoved) tr.classList.add('row-new');
-
-    const tdPriority = document.createElement('td');
-    tdPriority.innerHTML = `<span class="tag">${item.priority || '-'}</span>`;
 
     const tdScore = document.createElement('td');
     tdScore.appendChild(createScoreDisplay(item));
@@ -693,7 +690,7 @@ function renderDesktop(listings) {
     tdAction.appendChild(actionCell);
 
     if (item.pinned) tr.classList.add('row-pinned');
-    tr.append(tdPriority, tdScore, tdImage, tdInfo, tdPrice, tdPublished, tdStatus, tdNotes, tdAction);
+    tr.append(tdScore, tdImage, tdInfo, tdPrice, tdPublished, tdStatus, tdNotes, tdAction);
     rowsEl.appendChild(tr);
   }
 }
@@ -772,7 +769,6 @@ function renderKanban(listings) {
         ${cover ? `<img class="k-cover" src="${cover}" alt="Aperçu ${item.objectType || item.title}" loading="lazy" />` : '<div class="k-cover"></div>'}
         <div class="k-body">
           <div class="k-meta-top">
-            <span class="tag">${item.priority || '-'}</span>
             ${scoreMiniHtml(item)}
             <span class="k-price">${money(item.totalChf)}</span>
           </div>
@@ -882,7 +878,7 @@ function renderMobile(listings) {
     card.innerHTML = `
       ${cover ? `<img class="mobile-cover" src="${cover}" alt="Aperçu ${item.objectType || item.title}" loading="lazy" />` : '<div class="mobile-cover"></div>'}
       <div class="mobile-content">
-        <h3 class="mobile-title"><span class="tag">${item.priority || '-'}</span> ${scoreMiniHtml(item)} <a href="${item.url}" target="_blank" rel="noreferrer">${item.objectType || item.title}</a></h3>
+        <h3 class="mobile-title">${scoreMiniHtml(item)} <a href="${item.url}" target="_blank" rel="noreferrer">${item.objectType || item.title}</a></h3>
         <div class="mobile-meta">
           <div>${item.address || ''}</div>
           <div>${item.area || '-'} · ${money(item.totalChf)}${sourceMetaHtml(item) ? ` · ${sourceMetaHtml(item)}` : ''}</div>

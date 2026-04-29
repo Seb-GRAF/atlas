@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
 const DASHBOARD_DIR = path.join(ROOT, 'dashboard');
+const DASHBOARD_DIST_DIR = path.join(DASHBOARD_DIR, 'dist');
 const LEGACY_DATA_DIR = path.join(ROOT, 'data');
 const PROFILES_DATA_DIR = path.join(LEGACY_DATA_DIR, 'profiles');
 const SCRAPE_SCRIPT = path.join(ROOT, 'scripts', 'scrape-immobilier.mjs');
@@ -106,7 +107,6 @@ function makeDefaultConfig(profile, base = null) {
       maxPearlTotalChf: 1650,
       minRoomsPreferred: 2,
       minSurfaceM2Preferred: 0,
-      allowStudioTransition: true,
       excludedObjectTypeKeywords: ['chambre', 'colocation', 'wg'],
       missingScansBeforeRemoved: 2,
       maxPublishedAgeDays: null
@@ -164,6 +164,12 @@ async function serveFile(res, filePath) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Not found');
   }
+}
+
+async function serveSpaIndex(res) {
+  const indexPath = path.join(DASHBOARD_DIST_DIR, 'index.html');
+  if (await fileExists(indexPath)) return serveFile(res, indexPath);
+  return serveFile(res, path.join(DASHBOARD_DIR, 'index.html'));
 }
 
 function readBody(req) {
@@ -352,7 +358,6 @@ function buildConfigFromPayload(payload) {
       minRoomsPreferred: Number(filters.minRoomsPreferred) || 2,
       minSurfaceM2Preferred: Number(filters.minSurfaceM2Preferred) || 0,
       allowMissingSurface: filters.allowMissingSurface !== false,
-      allowStudioTransition: !!filters.allowStudioTransition,
       pearl: filters.pearl && typeof filters.pearl === 'object' ? {
         enabled: filters.pearl.enabled !== false,
         minRooms: Number(filters.pearl.minRooms) || 2,
@@ -575,23 +580,30 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/dashboard' || u.pathname === '/dashboard/')) {
-    res.writeHead(302, { location: `/${DEFAULT_PROFILE}/dashboard` });
+  if (req.method === 'GET' && u.pathname === '/') {
+    await ensureProfileStorage(DEFAULT_PROFILE);
+    return serveSpaIndex(res);
+  }
+
+  if (req.method === 'GET' && (u.pathname === '/dashboard' || u.pathname === '/dashboard/')) {
+    res.writeHead(302, { location: '/' });
     return res.end();
   }
 
   const rootProfileMatch = u.pathname.match(/^\/([a-z0-9-]+)\/?$/i);
   if (req.method === 'GET' && rootProfileMatch && !['api', 'dashboard', 'data'].includes(rootProfileMatch[1])) {
-    const profile = sanitizeProfile(rootProfileMatch[1]);
-    res.writeHead(302, { location: `/${profile}/dashboard` });
+    res.writeHead(302, { location: '/' });
     return res.end();
   }
 
   const profileTrailingSlashMatch = u.pathname.match(/^\/([a-z0-9-]+)\/dashboard\/$/i);
   if (req.method === 'GET' && profileTrailingSlashMatch) {
-    const profile = sanitizeProfile(profileTrailingSlashMatch[1]);
-    res.writeHead(302, { location: `/${profile}/dashboard` });
+    res.writeHead(302, { location: '/' });
     return res.end();
+  }
+
+  if (req.method === 'GET' && u.pathname.startsWith('/assets/')) {
+    return serveFile(res, path.join(DASHBOARD_DIST_DIR, u.pathname.replace(/^\//, '')));
   }
 
   if (req.method === 'GET' && u.pathname.startsWith('/dashboard/')) {
@@ -606,11 +618,11 @@ const server = http.createServer(async (req, res) => {
 
   const dashboardMatch = u.pathname.match(/^\/([a-z0-9-]+)\/dashboard(?:\/(.*))?$/i);
   if (req.method === 'GET' && dashboardMatch) {
-    const profile = sanitizeProfile(dashboardMatch[1]);
     const relative = dashboardMatch[2] || 'index.html';
 
     if (relative === 'index.html') {
-      await ensureProfileStorage(profile);
+      res.writeHead(302, { location: '/' });
+      return res.end();
     }
 
     return serveFile(res, path.join(DASHBOARD_DIR, relative));

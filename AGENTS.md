@@ -77,12 +77,6 @@ Two levels:
 ### Scoring
 Each listing gets a 0-100 score based on profile criteria (budget, rooms, surface, distance, travel time). `scoreBreakdown` contains the detail.
 
-### Priority
-- **A** — within budget + enough rooms
-- **A-** — within hard budget + enough rooms
-- **A★ (perle)** — above hard budget but matches pearl criteria (configurable keywords, min rooms/surface)
-- **B** — studios or below minimum rooms (only shown if "plans B" enabled)
-
 ### Pearl Detection
 
 Configurable per profile (`filters.pearl`):

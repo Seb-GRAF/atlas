@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Apartment search — final direction</title>
+<style>
+  :root{
+    --bg:#fbfaf7;
+    --paper:#ffffff;
+    --ink:#15171b;
+    --ink-2:#4a4f57;
+    --ink-3:#8a8f98;
+    --line:#ecebe6;
+    --line-2:#f2f1ec;
+    --soft:#f5f3ee;
+    --accent:#1f2937;        /* near-black accent, quiet */
+    --pearl:#9c7137;
+    --pearl-bg:#f8efdf;
+    --good:#2f7d54;
+    --bad:#a73a3a;
+    --sans:-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --r-lg:14px;
+    --r-md:10px;
+    --r-sm:6px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;-webkit-font-smoothing:antialiased;line-height:1.5}
+  button,input{font:inherit;color:inherit}
+  button{background:none;border:0;cursor:pointer;color:inherit}
+  a{color:inherit;text-decoration:none}
+
+  .app{max-width:1180px;margin:0 auto;padding:28px 28px 64px;min-height:100vh}
+
+  /* ---------- Header ---------- */
+  .topbar{
+    display:flex;align-items:center;gap:18px;
+    padding-bottom:22px;border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:-.005em}
+  .brand .logo{
+    width:22px;height:22px;border-radius:6px;background:var(--ink);
+    display:grid;place-items:center;color:#fff;font-size:11px;font-weight:600;
+  }
+  .brand .where{color:var(--ink-3);font-weight:400;margin-left:6px;font-size:13.5px}
+  .topbar .spacer{flex:1}
+  .iconbtn{
+    width:36px;height:36px;border-radius:10px;display:grid;place-items:center;
+    color:var(--ink-2);
+  }
+  .iconbtn:hover{background:var(--soft)}
+  .topbar .scan{
+    display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:999px;
+    background:var(--ink);color:#fff;font-size:13px;font-weight:500;
+  }
+  .topbar .scan .dot{width:6px;height:6px;border-radius:50%;background:#9bd6a8}
+
+  /* ---------- Title block ---------- */
+  .title-block{padding:34px 0 24px}
+  .eyebrow{
+    font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:500;
+  }
+  h1.h{
+    margin:8px 0 0;font-size:34px;font-weight:500;letter-spacing:-.02em;line-height:1.12;
+  }
+  .sub{color:var(--ink-3);margin-top:8px;font-size:14px}
+  .sub b{color:var(--ink);font-weight:500}
+
+  /* ---------- Tabs + view toggle ---------- */
+  .controls{
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    margin-top:24px;
+  }
+  .tabs{display:flex;gap:4px;flex-wrap:wrap}
+  .tab{
+    padding:7px 12px;border-radius:999px;font-size:13px;color:var(--ink-3);
+    display:inline-flex;align-items:center;gap:8px;
+  }
+  .tab:hover{color:var(--ink)}
+  .tab[aria-current="true"]{background:var(--ink);color:#fff}
+  .tab .n{
+    font-variant-numeric:tabular-nums;font-size:11.5px;color:var(--ink-3);
+  }
+  .tab[aria-current="true"] .n{color:#cdd0d6}
+  .controls .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .toggle{
+    display:inline-flex;background:var(--soft);border-radius:999px;padding:3px;gap:2px;
+  }
+  .toggle button{
+    padding:6px 12px;border-radius:999px;font-size:12.5px;color:var(--ink-2);
+    display:inline-flex;align-items:center;gap:6px;font-weight:500;
+  }
+  .toggle button[aria-pressed="true"]{background:#fff;color:var(--ink);box-shadow:0 0 0 1px var(--line),0 1px 1px rgba(0,0,0,.02)}
+  .search{
+    display:inline-flex;align-items:center;gap:8px;background:var(--soft);
+    border-radius:999px;padding:7px 12px;font-size:13px;color:var(--ink-3);min-width:220px;
+  }
+  .search input{background:transparent;border:0;outline:none;flex:1;color:var(--ink);min-width:0}
+  .search .k{font-family:var(--mono);font-size:10.5px;background:#fff;border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--ink-3)}
+
+  /* ---------- Stage grid ---------- */
+  .stage{
+    margin-top:22px;display:grid;grid-template-columns:minmax(0,1fr);gap:0;
+    position:relative;
+  }
+  .stage.with-map{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}
+
+  /* ---------- Listings list ---------- */
+  .list{display:flex;flex-direction:column;gap:0}
+  .row{
+    display:grid;
+    grid-template-columns:64px minmax(0,1fr) auto;
+    gap:18px;align-items:center;
+    padding:18px 4px;border-bottom:1px solid var(--line-2);
+    cursor:pointer;
+  }
+  .row:hover{background:rgba(255,255,255,.6)}
+  .row.active{
+    background:#fff;
+    box-shadow:inset 3px 0 0 var(--ink);
+    padding-left:14px;
+  }
+  .thumb{
+    width:64px;height:64px;border-radius:var(--r-md);
+    background:linear-gradient(135deg,#cfd6df,#aab3c0);
+    flex:0 0 64px;position:relative;overflow:hidden;
+  }
+  .thumb.t2{background:linear-gradient(135deg,#dccfba,#bfa784)}
+  .thumb.t3{background:linear-gradient(135deg,#c8d6c4,#94a89a)}
+  .thumb.t4{background:linear-gradient(135deg,#d6cdcb,#a89796)}
+  .thumb.t5{background:linear-gradient(135deg,#cdd6dd,#8aa0b3)}
+  .thumb .pearl{
+    position:absolute;left:6px;top:6px;width:14px;height:14px;border-radius:50%;
+    background:var(--pearl-bg);display:grid;place-items:center;color:var(--pearl);font-size:9px;font-weight:700;
+    box-shadow:0 0 0 2px rgba(255,255,255,.85);
+  }
+  .row .body{min-width:0;display:flex;flex-direction:column;gap:4px}
+  .row .ttl{
+    font-size:15px;font-weight:500;letter-spacing:-.005em;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .row .meta{
+    color:var(--ink-3);font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+  }
+  .row .meta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-3);opacity:.5}
+  .row .right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+  .price{font-size:15px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .age{font-size:12px;color:var(--ink-3)}
+  .pearl-tag{
+    display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--pearl);
+    background:var(--pearl-bg);padding:2px 8px;border-radius:999px;font-weight:500;
+  }
+  .pearl-tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--pearl)}
+
+  /* ---------- Map panel ---------- */
+  .map-panel{
+    position:sticky;top:24px;align-self:start;
+    height:calc(100vh - 80px);min-height:560px;max-height:780px;
+    border-radius:var(--r-lg);overflow:hidden;
+    background:
+      radial-gradient(900px 500px at 35% 25%,#eef3ee,transparent 60%),
+      radial-gradient(700px 500px at 75% 70%,#e8ecf2,transparent 60%),
+      #f3f1ea;
+    border:1px solid var(--line);
+  }
+  .map-panel svg.geo{position:absolute;inset:0;width:100%;height:100%;opacity:.6}
+  .map-panel .pins{position:absolute;inset:0}
+  .pin{
+    position:absolute;transform:translate(-50%,-100%);
+    background:#fff;border-radius:999px;padding:5px 11px 5px 5px;
+    display:inline-flex;align-items:center;gap:8px;
+    font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;
+    box-shadow:0 1px 2px rgba(15,17,21,.06),0 0 0 1px var(--line);
+    cursor:pointer;color:var(--ink-2);
+  }
+  .pin .n{
+    width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;
+    display:grid;place-items:center;font-size:10.5px;font-weight:600;
+  }
+  .pin.pearl .n{background:var(--pearl)}
+  .pin.sel{
+    color:#fff;background:var(--ink);
+    box-shadow:0 4px 14px rgba(15,17,21,.18),0 0 0 1px var(--ink);
+    transform:translate(-50%,-100%) scale(1.04);
+  }
+  .pin.sel .n{background:#fff;color:var(--ink)}
+  .pin.sel.pearl .n{background:var(--pearl-bg);color:var(--pearl)}
+  .work{
+    position:absolute;width:10px;height:10px;border-radius:50%;background:var(--ink);
+    box-shadow:0 0 0 4px rgba(15,17,21,.1);transform:translate(-50%,-50%);
+  }
+  .worklbl{
+    position:absolute;transform:translate(10px,-50%);
+    font-size:11px;color:var(--ink-2);background:rgba(255,255,255,.85);
+    padding:2px 7px;border-radius:4px;font-weight:500;
+  }
+  .map-overlay{
+    position:absolute;left:14px;top:14px;right:14px;display:flex;justify-content:space-between;gap:10px;pointer-events:none;
+  }
+  .map-overlay .chip-grp{display:flex;gap:6px;flex-wrap:wrap;pointer-events:auto}
+  .mchip{
+    background:rgba(255,255,255,.94);border-radius:999px;padding:5px 11px;font-size:12px;color:var(--ink-2);
+    box-shadow:0 0 0 1px var(--line);
+  }
+  .mchip.on{background:var(--ink);color:#fff;box-shadow:0 0 0 1px var(--ink)}
+  .legend{
+    position:absolute;bottom:14px;left:14px;
+    background:rgba(255,255,255,.94);padding:6px 10px;border-radius:8px;font-size:11.5px;color:var(--ink-2);
+    box-shadow:0 0 0 1px var(--line);display:flex;gap:12px;align-items:center;
+  }
+  .legend i{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}
+
+  /* mini preview tied to selection */
+  .mini{
+    position:absolute;left:14px;right:14px;bottom:14px;background:#fff;
+    border-radius:var(--r-md);padding:12px 14px;box-shadow:0 6px 22px rgba(15,17,21,.08),0 0 0 1px var(--line);
+    display:flex;gap:12px;align-items:center;
+  }
+  .mini .th{
+    width:48px;height:48px;border-radius:8px;
+    background:linear-gradient(135deg,#cfd6df,#aab3c0);
+    flex:0 0 48px;
+  }
+  .mini .col{flex:1;min-width:0}
+  .mini .ttl{font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mini .meta{font-size:12px;color:var(--ink-3)}
+  .mini .actions{display:flex;gap:6px}
+  .mini .actions button{
+    padding:7px 12px;border-radius:999px;font-size:12px;font-weight:500;
+    background:var(--soft);color:var(--ink-2);
+  }
+  .mini .actions button.primary{background:var(--ink);color:#fff}
+
+  /* ---------- Detail (when no map) ---------- */
+  .detail{
+    background:#fff;border-radius:var(--r-lg);border:1px solid var(--line);
+    padding:24px;display:none;flex-direction:column;gap:18px;margin-top:18px;
+  }
+  .detail.open{display:flex}
+
+  /* ---------- Mobile fab map toggle (only on small) ---------- */
+  .fab{
+    display:none;
+    position:fixed;left:50%;bottom:18px;transform:translateX(-50%);
+    background:var(--ink);color:#fff;border-radius:999px;padding:12px 18px;
+    font-size:13px;font-weight:500;box-shadow:0 10px 24px rgba(15,17,21,.18);
+    z-index:40;display:none;align-items:center;gap:8px;
+  }
+
+  /* ============================================================
+     RESPONSIVE
+     ============================================================ */
+  @media (max-width:960px){
+    .stage.with-map{grid-template-columns:minmax(0,1fr);gap:0}
+    .map-panel{
+      position:fixed;inset:0;z-index:50;border-radius:0;height:100vh;max-height:none;
+      transform:translateY(100%);transition:transform .28s ease;
+      border:0;
+    }
+    .map-panel.open{transform:translateY(0)}
+    .map-close{
+      position:absolute;right:14px;top:14px;
+      width:36px;height:36px;border-radius:50%;background:#fff;
+      display:grid;place-items:center;
+      box-shadow:0 0 0 1px var(--line),0 4px 14px rgba(15,17,21,.1);
+    }
+    .stage.with-map .fab{display:inline-flex}
+  }
+  @media (min-width:961px){
+    .map-close{display:none}
+  }
+  @media (max-width:680px){
+    .app{padding:18px 18px 90px}
+    h1.h{font-size:26px}
+    .topbar{padding-bottom:14px;gap:10px}
+    .title-block{padding:22px 0 14px}
+    .controls{gap:10px}
+    .search{min-width:0;flex:1 1 100%;order:5}
+    .controls .right{width:100%;justify-content:space-between}
+    .row{
+      grid-template-columns:56px minmax(0,1fr);
+      gap:14px;padding:14px 2px;
+    }
+    .row .right{
+      grid-column:2;
+      flex-direction:row;align-items:center;justify-content:space-between;
+    }
+    .thumb{width:56px;height:56px;flex-basis:56px}
+    .row .ttl{font-size:14.5px;white-space:normal;overflow:visible}
+    .row.active{padding-left:10px}
+    .map-panel{height:100vh}
+    .fab{padding:10px 16px}
+  }
+  @media (max-width:420px){
+    .tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;margin:0 -18px;padding:0 18px}
+    .tab{flex:0 0 auto}
+  }
+
+  /* tiny utilities */
+  .src{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.02em}
+  .dimwhy{font-size:13px;color:var(--ink-2);line-height:1.55}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- =================== TOP BAR =================== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">A</span>
+      <span>Atlas</span>
+      <span class="where">· Vevey & environs</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="iconbtn" title="Réglages" aria-label="Réglages">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+    <button class="scan">
+      <span class="dot"></span> Scanner
+    </button>
+  </header>
+
+  <!-- =================== TITLE =================== -->
+  <section class="title-block">
+    <div class="eyebrow">Recherche en cours</div>
+    <h1 class="h">À trier ce matin</h1>
+    <p class="sub">
+      <b>4 nouvelles annonces</b> depuis 14:12 · <b>1 perle</b> · score moyen 73
+    </p>
+  </section>
+
+  <!-- =================== CONTROLS =================== -->
+  <section class="controls">
+    <div class="tabs" role="tablist">
+      <button class="tab" aria-current="true">À trier <span class="n">23</span></button>
+      <button class="tab">Perles <span class="n">7</span></button>
+      <button class="tab">Contactés <span class="n">12</span></button>
+      <button class="tab">Visites <span class="n">3</span></button>
+      <button class="tab">Dossier <span class="n">1</span></button>
+    </div>
+    <div class="right">
+      <div class="search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input placeholder="Filtrer…" />
+        <span class="k">/</span>
+      </div>
+      <div class="toggle" role="group" aria-label="Vue">
+        <button id="t-list" aria-pressed="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+          Liste
+        </button>
+        <button id="t-map" aria-pressed="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v16M15 6v16"/></svg>
+          Carte
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================== STAGE =================== -->
+  <section class="stage" id="stage">
+    <!-- LIST -->
+    <div class="list" id="list">
+
+      <!-- row 1 — selected pearl -->
+      <div class="row active" data-id="1">
+        <div class="thumb t2">
+          <div class="pearl" title="Perle">★</div>
+        </div>
+        <div class="body">
+          <div class="ttl">2.5 pces avec terrasse</div>
+          <div class="meta">
+            <span>Montreux haut</span>
+            <span class="sep"></span>
+            <span>62 m²</span>
+            <span class="sep"></span>
+            <span>18 min vélo</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">1 980 CHF</span>
+          <span class="pearl-tag">Perle · 81</span>
+        </div>
+      </div>
+
+      <!-- row 2 -->
+      <div class="row" data-id="2">
+        <div class="thumb t5"></div>
+        <div class="body">
+          <div class="ttl">3.5 pces vue lac</div>
+          <div class="meta">
+            <span>Vevey</span>
+            <span class="sep"></span>
+            <span>89 m²</span>
+            <span class="sep"></span>
+            <span>12 min</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">2 240 CHF</span>
+          <span class="age">Score 84 · il y a 4h</span>
+        </div>
+      </div>
+
+      <!-- row 3 -->
+      <div class="row" data-id="3">
+        <div class="thumb t3"></div>
+        <div class="body">
+          <div class="ttl">3.5 pces traversant</div>
+          <div class="meta">
+            <span>La Tour-de-Peilz</span>
+            <span class="sep"></span>
+            <span>87 m²</span>
+            <span class="sep"></span>
+            <span>22 min</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">2 460 CHF</span>
+          <span class="age">Score 78 · 2j</span>
+        </div>
+      </div>
+
+      <!-- row 4 -->
+      <div class="row" data-id="4">
+        <div class="thumb t4"></div>
+        <div class="body">
+          <div class="ttl">4 pces lumineux</div>
+          <div class="meta">
+            <span>Vevey centre</span>
+            <span class="sep"></span>
+            <span>92 m²</span>
+            <span class="sep"></span>
+            <span>15 min</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">2 350 CHF</span>
+          <span class="age">Score 74 · 3h</span>
+        </div>
+      </div>
+
+      <!-- row 5 -->
+      <div class="row" data-id="5">
+        <div class="thumb t1"></div>
+        <div class="body">
+          <div class="ttl">4.5 pces avec jardin</div>
+          <div class="meta">
+            <span>Blonay</span>
+            <span class="sep"></span>
+            <span>108 m²</span>
+            <span class="sep"></span>
+            <span>28 min</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">2 540 CHF</span>
+          <span class="age">Score 69 · hier</span>
+        </div>
+      </div>
+
+      <!-- row 6 -->
+      <div class="row" data-id="6">
+        <div class="thumb t2"></div>
+        <div class="body">
+          <div class="ttl">3 pces rénové</div>
+          <div class="meta">
+            <span>Clarens</span>
+            <span class="sep"></span>
+            <span>78 m²</span>
+            <span class="sep"></span>
+            <span>20 min</span>
+          </div>
+        </div>
+        <div class="right">
+          <span class="price">2 100 CHF</span>
+          <span class="age">Score 66 · 1j</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- MAP -->
+    <aside class="map-panel" id="map" aria-hidden="true">
+      <button class="map-close" id="mapClose" aria-label="Fermer la carte">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+
+      <svg class="geo" viewBox="0 0 800 700" preserveAspectRatio="none">
+        <path d="M0,470 C140,430 240,480 340,450 C460,410 560,480 660,440 C730,410 800,430 800,450 L800,700 L0,700 Z" fill="#cde0d3" />
+        <path d="M0,455 C160,440 270,470 370,440 C510,410 590,450 690,430 C750,418 800,428 800,430 L800,700 L0,700 Z" fill="#bdd6c5" opacity=".55" />
+        <circle cx="180" cy="200" r="60" fill="#dfe6ee" opacity=".7"/>
+        <circle cx="640" cy="240" r="86" fill="#dfe6ee" opacity=".55"/>
+      </svg>
+
+      <div class="map-overlay">
+        <div class="chip-grp">
+          <button class="mchip on">Score ≥ 70</button>
+          <button class="mchip">Perles</button>
+          <button class="mchip">≤ 25 min bureau</button>
+        </div>
+      </div>
+
+      <div class="pins" id="pins">
+        <div class="work" style="left:62%;top:36%"></div>
+        <div class="worklbl" style="left:62%;top:36%">Bureau</div>
+
+        <div class="pin pearl sel" data-id="1" style="left:42%;top:48%"><span class="n">81</span>1 980</div>
+        <div class="pin"            data-id="2" style="left:50%;top:42%"><span class="n">84</span>2 240</div>
+        <div class="pin"            data-id="3" style="left:54%;top:54%"><span class="n">78</span>2 460</div>
+        <div class="pin"            data-id="4" style="left:48%;top:46%"><span class="n">74</span>2 350</div>
+        <div class="pin"            data-id="5" style="left:36%;top:62%"><span class="n">69</span>2 540</div>
+        <div class="pin"            data-id="6" style="left:46%;top:58%"><span class="n">66</span>2 100</div>
+      </div>
+
+      <div class="legend">
+        <span><i style="background:var(--pearl)"></i>Perle</span>
+        <span><i style="background:var(--ink)"></i>Listing</span>
+        <span><i style="background:#1f2937;box-shadow:0 0 0 3px rgba(15,17,21,.1)"></i>Bureau</span>
+      </div>
+
+      <div class="mini" id="mini">
+        <div class="th"></div>
+        <div class="col">
+          <div class="ttl">2.5 pces avec terrasse · Montreux haut</div>
+          <div class="meta">1 980 CHF · 62 m² · 18 min</div>
+        </div>
+        <div class="actions">
+          <button>Passer</button>
+          <button class="primary">Contacter</button>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <button class="fab" id="fab" type="button">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2z"/></svg>
+    <span id="fabLabel">Carte</span>
+  </button>
+
+</div>
+
+<script>
+  const stage = document.getElementById('stage');
+  const map = document.getElementById('map');
+  const tList = document.getElementById('t-list');
+  const tMap = document.getElementById('t-map');
+  const fab = document.getElementById('fab');
+  const fabLabel = document.getElementById('fabLabel');
+  const mapClose = document.getElementById('mapClose');
+
+  const isMobile = () => window.matchMedia('(max-width:960px)').matches;
+
+  function setMap(open){
+    if(isMobile()){
+      map.classList.toggle('open', open);
+      stage.classList.add('with-map'); // keep grid simple; map is overlay on mobile
+      fabLabel.textContent = open ? 'Fermer' : 'Carte';
+    } else {
+      stage.classList.toggle('with-map', open);
+      map.setAttribute('aria-hidden', !open);
+    }
+    tList.setAttribute('aria-pressed', !open);
+    tMap.setAttribute('aria-pressed', open);
+  }
+
+  // Default: list only on desktop, list (with FAB) on mobile
+  setMap(false);
+  // Show map by default on wide screens? keep airy → start with list only.
+
+  tList.addEventListener('click', () => setMap(false));
+  tMap.addEventListener('click', () => setMap(true));
+  fab.addEventListener('click', () => setMap(!map.classList.contains('open')));
+  mapClose.addEventListener('click', () => setMap(false));
+
+  // Show FAB only when stage has a map context on mobile
+  function syncFab(){
+    fab.style.display = isMobile() ? 'inline-flex' : 'none';
+  }
+  syncFab();
+  window.addEventListener('resize', syncFab);
+
+  // Selection sync between list and pins
+  const rows = document.querySelectorAll('.row');
+  const pins = document.querySelectorAll('.pin');
+  function select(id){
+    rows.forEach(r => r.classList.toggle('active', r.dataset.id === id));
+    pins.forEach(p => p.classList.toggle('sel', p.dataset.id === id));
+  }
+  rows.forEach(r => r.addEventListener('click', () => select(r.dataset.id)));
+  pins.forEach(p => p.addEventListener('click', () => select(p.dataset.id)));
+</script>
+</body>
+</html>

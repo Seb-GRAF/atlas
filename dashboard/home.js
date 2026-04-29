@@ -229,8 +229,6 @@ function showForm(mode = 'create', profile = null) {
     document.getElementById('s-rp-listings').checked = profile.sources?.retraitesListings !== false;
     document.getElementById('s-rp-projects').checked = profile.sources?.retraitesProjets !== false;
     document.getElementById('s-anibis').checked = !!profile.sources?.anibis;
-    document.getElementById('f-studio').checked = !!profile.filters?.allowStudioTransition;
-
     // Pearl config
     const pearl = profile.filters?.pearl || {};
     const pearlEnabled = pearl.enabled !== false;
@@ -300,7 +298,6 @@ formEl.addEventListener('submit', async (e) => {
       minSurfaceM2Preferred: Number(document.getElementById('f-min-surface').value) || 0,
       maxPublishedAgeDays: Number(document.getElementById('f-max-age').value) || 30,
       allowMissingSurface: document.getElementById('f-allow-missing-surface').checked,
-      allowStudioTransition: document.getElementById('f-studio').checked,
       pearl: {
         enabled: pearlEnabledEl.checked,
         minRooms: Number(document.getElementById('f-pearl-min-rooms').value) || 2,

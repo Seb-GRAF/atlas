@@ -5,10 +5,34 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/serve-dashboard.mjs",
-    "scan": "node scripts/scrape-immobilier.mjs"
+    "scan": "node scripts/scrape-immobilier.mjs",
+    "dev:ui": "vite --host 127.0.0.1",
+    "build:ui": "vite build",
+    "test:ui": "vitest run"
   },
   "engines": {
     "node": ">=18.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@mantine/core": "^9.1.1",
+    "@mantine/form": "^9.1.1",
+    "@mantine/hooks": "^9.1.1",
+    "@mantine/notifications": "^9.1.1",
+    "@tabler/icons-react": "^3.41.1",
+    "@tanstack/react-query": "^5.100.6",
+    "@tanstack/react-table": "^8.21.3",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^29.1.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5",
+    "zod": "^4.3.6"
+  }
 }

@@ -1,10 +1,10 @@
 # Apartment Search 🏠
 
-Local dashboard for tracking apartment listings in Switzerland. Automatically scrapes listings from immobilier.ch, flatfox.ch, naef.ch, bernard-nicod.ch, Retraites Populaires direct rentals + projects (off-market), and anibis.ch, then displays them in a dashboard with status tracking, scoring, and cross-source deduplication.
+Local dashboard for tracking apartment listings in Switzerland. Automatically scrapes listings from immobilier.ch, flatfox.ch, naef.ch, bernard-nicod.ch, Retraites Populaires direct rentals + projects (off-market), and anibis.ch, then displays them in a React/Mantine dashboard with status tracking, scoring, and cross-source deduplication.
 
 ## Prerequisites
 
-- **Node.js 18+** (no npm dependencies to install)
+- **Node.js 18+**
 
 ## Getting Started
 
@@ -12,10 +12,27 @@ Local dashboard for tracking apartment listings in Switzerland. Automatically sc
 git clone <repo-url>
 cd flat-scrapping
 cp .env.example .env   # optional — only if you want a custom PORT
+npm install
+npm run build:ui
 npm start
 ```
 
 Open http://localhost:8787/ in your browser.
+
+For frontend development only:
+
+```bash
+npm run dev:ui
+```
+
+The Vite dev server proxies `/api/*` to the local Node server on port `8787`.
+
+Useful frontend commands:
+
+```bash
+npm run build:ui
+npm run test:ui
+```
 
 ## Environment Variables
 
@@ -47,16 +64,16 @@ Each profile is independent with its own data and criteria.
 
 Each profile has its own dashboard at `/{profile}/dashboard`:
 
-- **Table view** — sort by score, price, zone
+- **Table view** — dense newest-first review with score, rent, status, notes, and actions
 - **Kanban view** — tracking pipeline (À contacter → Visite → Dossier → etc.)
-- **Filters** — by priority, pearls, studios
-- **Actions** — change status, add notes, delete
+- **Search** — by address, type, zone, or title
+- **Actions** — scan, refresh, pin, change status, add notes, delete removed listings, view image galleries
 
 ### Running a Scan
 
 Two options:
 
-1. **From the dashboard** — click "Lancer un scan"
+1. **From the dashboard** — click "Scanner"
 2. **CLI**:
    ```bash
    npm run scan -- --profile=vevey
@@ -78,11 +95,14 @@ The profile switcher in the dashboard header also allows quick switching.
 
 ```
 flat-scrapping/
-├── dashboard/          # Frontend (HTML/CSS/JS, zero framework)
-│   ├── home.html       # Home page / profile management
-│   ├── index.html      # Per-profile dashboard
-│   ├── app.js          # Dashboard logic
-│   └── styles.css      # Shared styles
+├── dashboard-ui/       # React + TypeScript + Mantine source
+│   └── src/
+├── dashboard/          # Built frontend assets + legacy rollback files
+│   ├── dist/           # Vite production build served by the Node server
+│   ├── home.html       # Legacy home page
+│   ├── index.html      # Legacy per-profile dashboard
+│   ├── app.js          # Legacy dashboard logic
+│   └── styles.css      # Legacy shared styles
 ├── scripts/
 │   ├── serve-dashboard.mjs   # HTTP server + API
 │   └── scrape-immobilier.mjs # Multi-source scraper

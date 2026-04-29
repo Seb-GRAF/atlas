@@ -1,6 +1,6 @@
 # Apartment Search 🏠
 
-Local dashboard for tracking apartment listings in Switzerland. Automatically scrapes listings from immobilier.ch, flatfox.ch, naef.ch, bernard-nicod.ch, Retraites Populaires direct rentals + projects (off-market), and anibis.ch, then displays them in a React/Mantine dashboard with status tracking, scoring, and cross-source deduplication.
+Local dashboard for tracking apartment listings in Switzerland. Automatically scrapes listings from immobilier.ch, flatfox.ch, naef.ch, bernard-nicod.ch, Retraites Populaires direct rentals + projects (off-market), and anibis.ch, then displays them in a React/Mantine dashboard with status tracking and cross-source deduplication.
 
 ## Prerequisites
 
@@ -50,10 +50,9 @@ On first access, the home page shows the profile list (empty initially). Click *
 
 - **Title** — short profile name (e.g. "Vevey et environs")
 - **Zones** — search and select Swiss municipalities via autocomplete (powered by [geo.admin.ch](https://api3.geo.admin.ch)). Canton, slug, and coordinates are derived automatically.
-- **Budget** — max rent, hard cap, "pearl" threshold
+- **Budget** — max rent and hard cap
 - **Rooms / minimum surface**
 - **Workplace address** — autocomplete search for distance calculation
-- **Pearl detection** — toggle on/off, configure keywords, min rooms/surface, and hit threshold for listings slightly above budget that are worth flagging
 - **Sources** — which feeds to enable (immobilier.ch, flatfox.ch, naef.ch, bernard-nicod.ch, Retraites Populaires locations directes + projets off-market, anibis.ch)
 
 Each profile is independent with its own data and criteria.
@@ -64,7 +63,7 @@ Each profile is independent with its own data and criteria.
 
 Each profile has its own dashboard at `/{profile}/dashboard`:
 
-- **Table view** — dense newest-first review with score, rent, status, notes, and actions
+- **Table view** — dense newest-first review with rent, status, notes, and actions
 - **Kanban view** — tracking pipeline (À contacter → Visite → Dossier → etc.)
 - **Search** — by address, type, zone, or title
 - **Actions** — scan, refresh, pin, change status, add notes, delete removed listings, view image galleries
@@ -79,7 +78,7 @@ Two options:
    npm run scan -- --profile=vevey
    ```
 
-The scan fetches new listings, deduplicates (same listing across multiple sites = 1 entry), computes a score, and updates the tracker.
+The scan fetches new listings, deduplicates same listings across multiple sites, and updates the tracker.
 
 ### Managing Profiles
 
@@ -107,12 +106,12 @@ flat-scrapping/
 │   ├── serve-dashboard.mjs   # HTTP server + API
 │   └── scrape-immobilier.mjs # Multi-source scraper
 ├── data/
-│   └── profiles/       # One folder per profile (gitignored)
+│   └── profiles/       # One folder per profile
 │       └── {profile}/
-│           ├── watch-config.json     # Configuration
-│           ├── tracker.json          # Tracked listings
-│           ├── latest-listings.json  # Latest scan results
-│           └── geocode-cache.json    # Geocoding cache
+│           ├── watch-config.json     # Configuration (tracked)
+│           ├── tracker.json          # Tracked listings (gitignored)
+│           ├── latest-listings.json  # Latest scan results (gitignored)
+│           └── geocode-cache.json    # Geocoding cache (gitignored)
 ├── .env.example        # Environment variable template
 └── package.json
 ```
@@ -121,10 +120,8 @@ flat-scrapping/
 
 1. **Scrape** — fetches listings from configured sources
 2. **Deduplication** — by ID (intra-source), then by composite key address + rooms (floored) + surface (±5m²) + price (±50 CHF) for cross-source matching
-3. **Scoring** — each listing gets a 0-100 score based on profile criteria
-4. **Pearl detection** — listings slightly above budget with quality signals (configurable keywords) are flagged as "pearls"
-5. **Tracker** — listings are persisted and their status is tracked across scans
-6. **Dashboard** — real-time display with filters, sorting, and actions
+3. **Tracker** — listings are persisted and their status is tracked across scans
+4. **Dashboard** — real-time display with filters, sorting, and actions
 
 ## Port
 

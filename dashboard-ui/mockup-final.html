@@ -15,8 +15,6 @@
     --line-2:#f2f1ec;
     --soft:#f5f3ee;
     --accent:#1f2937;        /* near-black accent, quiet */
-    --pearl:#9c7137;
-    --pearl-bg:#f8efdf;
     --good:#2f7d54;
     --bad:#a73a3a;
     --sans:-apple-system,BlinkMacSystemFont,"Inter","Helvetica Neue",sans-serif;
@@ -130,11 +128,6 @@
   .thumb.t3{background:linear-gradient(135deg,#c8d6c4,#94a89a)}
   .thumb.t4{background:linear-gradient(135deg,#d6cdcb,#a89796)}
   .thumb.t5{background:linear-gradient(135deg,#cdd6dd,#8aa0b3)}
-  .thumb .pearl{
-    position:absolute;left:6px;top:6px;width:14px;height:14px;border-radius:50%;
-    background:var(--pearl-bg);display:grid;place-items:center;color:var(--pearl);font-size:9px;font-weight:700;
-    box-shadow:0 0 0 2px rgba(255,255,255,.85);
-  }
   .row .body{min-width:0;display:flex;flex-direction:column;gap:4px}
   .row .ttl{
     font-size:15px;font-weight:500;letter-spacing:-.005em;
@@ -147,12 +140,6 @@
   .row .right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
   .price{font-size:15px;font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
   .age{font-size:12px;color:var(--ink-3)}
-  .pearl-tag{
-    display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--pearl);
-    background:var(--pearl-bg);padding:2px 8px;border-radius:999px;font-weight:500;
-  }
-  .pearl-tag::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--pearl)}
-
   /* ---------- Map panel ---------- */
   .map-panel{
     position:sticky;top:24px;align-self:start;
@@ -178,14 +165,12 @@
     width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;
     display:grid;place-items:center;font-size:10.5px;font-weight:600;
   }
-  .pin.pearl .n{background:var(--pearl)}
   .pin.sel{
     color:#fff;background:var(--ink);
     box-shadow:0 4px 14px rgba(15,17,21,.18),0 0 0 1px var(--ink);
     transform:translate(-50%,-100%) scale(1.04);
   }
   .pin.sel .n{background:#fff;color:var(--ink)}
-  .pin.sel.pearl .n{background:var(--pearl-bg);color:var(--pearl)}
   .work{
     position:absolute;width:10px;height:10px;border-radius:50%;background:var(--ink);
     box-shadow:0 0 0 4px rgba(15,17,21,.1);transform:translate(-50%,-50%);
@@ -327,7 +312,7 @@
     <div class="eyebrow">Recherche en cours</div>
     <h1 class="h">À trier ce matin</h1>
     <p class="sub">
-      <b>4 nouvelles annonces</b> depuis 14:12 · <b>1 perle</b> · score moyen 73
+      <b>4 nouvelles annonces</b> depuis 14:12
     </p>
   </section>
 
@@ -335,7 +320,6 @@
   <section class="controls">
     <div class="tabs" role="tablist">
       <button class="tab" aria-current="true">À trier <span class="n">23</span></button>
-      <button class="tab">Perles <span class="n">7</span></button>
       <button class="tab">Contactés <span class="n">12</span></button>
       <button class="tab">Visites <span class="n">3</span></button>
       <button class="tab">Dossier <span class="n">1</span></button>
@@ -364,11 +348,9 @@
     <!-- LIST -->
     <div class="list" id="list">
 
-      <!-- row 1 — selected pearl -->
+      <!-- row 1 — selected -->
       <div class="row active" data-id="1">
-        <div class="thumb t2">
-          <div class="pearl" title="Perle">★</div>
-        </div>
+        <div class="thumb t2"></div>
         <div class="body">
           <div class="ttl">2.5 pces avec terrasse</div>
           <div class="meta">
@@ -381,7 +363,7 @@
         </div>
         <div class="right">
           <span class="price">1 980 CHF</span>
-          <span class="pearl-tag">Perle · 81</span>
+          <span class="age">16 min</span>
         </div>
       </div>
 
@@ -400,7 +382,7 @@
         </div>
         <div class="right">
           <span class="price">2 240 CHF</span>
-          <span class="age">Score 84 · il y a 4h</span>
+          <span class="age">il y a 4h</span>
         </div>
       </div>
 
@@ -419,7 +401,7 @@
         </div>
         <div class="right">
           <span class="price">2 460 CHF</span>
-          <span class="age">Score 78 · 2j</span>
+          <span class="age">2j</span>
         </div>
       </div>
 
@@ -438,7 +420,7 @@
         </div>
         <div class="right">
           <span class="price">2 350 CHF</span>
-          <span class="age">Score 74 · 3h</span>
+          <span class="age">3h</span>
         </div>
       </div>
 
@@ -457,7 +439,7 @@
         </div>
         <div class="right">
           <span class="price">2 540 CHF</span>
-          <span class="age">Score 69 · hier</span>
+          <span class="age">hier</span>
         </div>
       </div>
 
@@ -476,7 +458,7 @@
         </div>
         <div class="right">
           <span class="price">2 100 CHF</span>
-          <span class="age">Score 66 · 1j</span>
+          <span class="age">1j</span>
         </div>
       </div>
 
@@ -497,9 +479,7 @@
 
       <div class="map-overlay">
         <div class="chip-grp">
-          <button class="mchip on">Score ≥ 70</button>
-          <button class="mchip">Perles</button>
-          <button class="mchip">≤ 25 min bureau</button>
+          <button class="mchip on">≤ 25 min bureau</button>
         </div>
       </div>
 
@@ -507,7 +487,7 @@
         <div class="work" style="left:62%;top:36%"></div>
         <div class="worklbl" style="left:62%;top:36%">Bureau</div>
 
-        <div class="pin pearl sel" data-id="1" style="left:42%;top:48%"><span class="n">81</span>1 980</div>
+        <div class="pin sel" data-id="1" style="left:42%;top:48%"><span class="n">81</span>1 980</div>
         <div class="pin"            data-id="2" style="left:50%;top:42%"><span class="n">84</span>2 240</div>
         <div class="pin"            data-id="3" style="left:54%;top:54%"><span class="n">78</span>2 460</div>
         <div class="pin"            data-id="4" style="left:48%;top:46%"><span class="n">74</span>2 350</div>
@@ -516,7 +496,6 @@
       </div>
 
       <div class="legend">
-        <span><i style="background:var(--pearl)"></i>Perle</span>
         <span><i style="background:var(--ink)"></i>Listing</span>
         <span><i style="background:#1f2937;box-shadow:0 0 0 3px rgba(15,17,21,.1)"></i>Bureau</span>
       </div>

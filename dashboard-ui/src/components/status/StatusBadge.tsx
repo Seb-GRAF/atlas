@@ -1,13 +1,16 @@
 import { Badge } from '@mantine/core';
 
 const STATUS_COLORS: Record<string, string> = {
+  'À trier': 'amber',
   'À contacter': 'lake',
-  Visite: 'lake',
-  Dossier: 'alpine',
-  Relance: 'amber',
+  Contacté: 'lake',
+  'Visite prévue': 'lake',
+  'Dossier à envoyer': 'alpine',
+  'Dossier envoyé': 'alpine',
+  'Relance à faire': 'amber',
   Accepté: 'alpine',
-  Refusé: 'swiss',
-  'Sans réponse': 'slate',
+  Écartée: 'swiss',
+  'Refus régie': 'swiss',
   Retirées: 'slate',
   Retirée: 'slate'
 };

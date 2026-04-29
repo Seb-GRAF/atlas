@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { deleteListing, toggleListingPin, updateListingStatus } from '../../api/listings';
 import { Listing } from '../../api/schemas';
-import { DEFAULT_STATUSES } from '../../utils/listings';
+import { DEFAULT_STATUSES, normalizeListingStatus } from '../../utils/listings';
 
 export function StatusSelect({
   profile,
@@ -19,15 +19,18 @@ export function StatusSelect({
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: (status: string) => updateListingStatus(profile, item.id, status, item.notes || ''),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state', profile] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state'] }),
     onError: (err) => notifications.show({ color: 'swiss', title: 'Erreur statut', message: (err as Error).message })
   });
 
-  const options = (statuses.length ? statuses : DEFAULT_STATUSES).map((status) => ({ value: status, label: status }));
+  const options = [...new Set((statuses.length ? statuses : DEFAULT_STATUSES).map(normalizeListingStatus))].map((status) => ({
+    value: status,
+    label: status
+  }));
   return (
     <Select
       data={options}
-      value={item.status || 'À contacter'}
+      value={normalizeListingStatus(item.status)}
       disabled={item.isRemoved || mutation.isPending}
       onChange={(status) => status && mutation.mutate(status)}
       aria-label="Statut"
@@ -39,7 +42,7 @@ export function PinButton({ profile, item }: { profile: string; item: Listing })
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => toggleListingPin(profile, item.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state', profile] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state'] }),
     onError: (err) => notifications.show({ color: 'swiss', title: 'Erreur épingle', message: (err as Error).message })
   });
 
@@ -63,8 +66,8 @@ export function NotesSave({ profile, item }: { profile: string; item: Listing })
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState(item.notes || '');
   const mutation = useMutation({
-    mutationFn: () => updateListingStatus(profile, item.id, item.status || 'À contacter', notes),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state', profile] }),
+    mutationFn: () => updateListingStatus(profile, item.id, normalizeListingStatus(item.status), notes),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state'] }),
     onError: (err) => notifications.show({ color: 'swiss', title: 'Erreur notes', message: (err as Error).message })
   });
 
@@ -88,7 +91,7 @@ export function DeleteRemovedButton({ profile, item }: { profile: string; item: 
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => deleteListing(profile, item.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state', profile] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['state'] }),
     onError: (err) => notifications.show({ color: 'swiss', title: 'Erreur suppression', message: (err as Error).message })
   });
 

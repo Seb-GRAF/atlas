@@ -29,11 +29,17 @@ export async function apiRequest<T>(
     }
   });
 
+  const raw = await res.text();
   let payload: unknown;
   try {
-    payload = await res.json();
+    payload = raw ? JSON.parse(raw) : null;
   } catch (err) {
-    throw new ApiError(`Réponse API illisible (${(err as Error).message})`, res.status);
+    const detail = raw.trim() ? `: ${raw.slice(0, 160)}` : '';
+    throw new ApiError(`Réponse API illisible (${res.status})${detail}`, res.status);
+  }
+
+  if (payload === null) {
+    throw new ApiError(`Réponse API vide (${res.status}). Vérifiez que le serveur API tourne sur le port 8787.`, res.status);
   }
 
   const parsed = schema.safeParse(payload);

@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Card, Group, SimpleGrid, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Card, Group, SimpleGrid, Stack, Text, Title, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconEdit, IconTrash } from '@tabler/icons-react';
 import { ProfileSummary } from '../../api/schemas';
 import { navigate } from '../../app/routes';
@@ -17,12 +17,12 @@ export function ProfileCard({
   return (
     <Card>
       <Stack gap="sm" h="100%">
-        <button type="button" onClick={() => navigate(url)} style={{ all: 'unset', cursor: 'pointer', display: 'block' }}>
+        <UnstyledButton display="block" onClick={() => navigate(url)}>
           <Title order={3}>{profile.shortTitle || profile.name || profile.slug}</Title>
           <Text size="sm" c="dimmed" lineClamp={2} mt={4}>
             {profile.areas || 'Aucune zone'}
           </Text>
-        </button>
+        </UnstyledButton>
         <SimpleGrid cols={3} spacing="xs" mt="auto">
           <div>
             <Text size="xs" c="dimmed">Annonces</Text>

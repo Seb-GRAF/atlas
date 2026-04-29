@@ -4,7 +4,7 @@ Guide for any AI agent working on this project.
 
 ## Overview
 
-Local dashboard (zero-deps, pure Node.js) for tracking apartment listings in Switzerland. Multi-source scraping (immobilier.ch, flatfox.ch, homegate.ch, anibis.ch), cross-source deduplication, scoring, and status pipeline tracking.
+Local dashboard (zero-deps, pure Node.js) for tracking apartment listings in Switzerland. Multi-source scraping (immobilier.ch, flatfox.ch, homegate.ch, anibis.ch), cross-source deduplication, and status pipeline tracking.
 
 ## Architecture
 
@@ -18,12 +18,12 @@ apartment-search/
 │   ├── home.html / home.js / home.css  # Home page + profile management
 │   ├── index.html / app.js / styles.css # Per-profile dashboard
 ├── data/
-│   └── profiles/{slug}/        # One folder per profile (gitignored)
-│       ├── watch-config.json   # Profile configuration
-│       ├── tracker.json        # Tracked listings (persistent)
-│       ├── latest-listings.json # Latest scan results
-│       ├── geocode-cache.json  # Geocoding cache
-│       └── route-cache.json    # Travel route cache
+│   └── profiles/{slug}/        # One folder per profile
+│       ├── watch-config.json   # Profile configuration (tracked)
+│       ├── tracker.json        # Tracked listings (gitignored)
+│       ├── latest-listings.json # Latest scan results (gitignored)
+│       ├── geocode-cache.json  # Geocoding cache (gitignored)
+│       └── route-cache.json    # Travel route cache (gitignored)
 ├── .env.example                # Environment variable template
 └── package.json
 ```
@@ -73,19 +73,6 @@ Two levels:
    - **Price** — total rent (gross), rounded to nearest 50 CHF
 
    Keeps the listing with the best quality rank (source priority + data completeness + image count).
-
-### Scoring
-Each listing gets a 0-100 score based on profile criteria (budget, rooms, surface, distance, travel time). `scoreBreakdown` contains the detail.
-
-### Pearl Detection
-
-Configurable per profile (`filters.pearl`):
-- `enabled` — toggle on/off
-- `minRooms` / `minSurfaceM2` — minimum thresholds
-- `keywords` — list of quality signals to look for in listing text
-- `minHits` — how many keywords must match
-
-Price must be between `maxTotalHardChf` and `maxPearlTotalChf`.
 
 ### Status Pipeline
 `À contacter → Visite → Dossier → Relance → Accepté / Refusé / Sans réponse`

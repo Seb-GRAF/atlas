@@ -6,7 +6,12 @@ logs/
 *.log
 
 # Local/runtime scraped data
-/data/
+/data/*
+!/data/profiles/
+/data/profiles/*
+!/data/profiles/*/
+/data/profiles/*/*
+!/data/profiles/*/watch-config.json
 
 # Optional local secrets
 .env

@@ -1,4 +1,4 @@
-import { Card, Group, Progress, Text } from '@mantine/core';
+import { Badge, Card, Group, Progress, Text } from '@mantine/core';
 import { ProfileSummary, ScanAllJob } from '../../api/schemas';
 
 export function ScanAllProgress({ job, profiles }: { job: ScanAllJob; profiles: ProfileSummary[] }) {
@@ -21,18 +21,18 @@ export function ScanAllProgress({ job, profiles }: { job: ScanAllJob; profiles: 
           const result = results.find((item) => item.slug === profile.slug);
           if (result) {
             return (
-              <Text key={profile.slug} size="xs" px={8} py={3} bg={result.ok ? 'alpine.0' : 'swiss.0'} c={result.ok ? 'alpine.8' : 'swiss.8'} bd="1px solid slate.2" style={{ borderRadius: 999 }}>
+              <Badge key={profile.slug} color={result.ok ? 'alpine' : 'swiss'} variant="light">
                 {profile.shortTitle || profile.slug} {result.ok ? '✓' : '✗'}
-              </Text>
+              </Badge>
             );
           }
           const isRunning = job.status !== 'done' && !doneSlugs.has(profile.slug) && !runningShown;
           if (isRunning) runningShown = true;
           return (
-            <Text key={profile.slug} size="xs" px={8} py={3} c={isRunning ? 'amber.8' : 'dimmed'} bg={isRunning ? 'amber.0' : 'transparent'} bd="1px solid slate.2" style={{ borderRadius: 999 }}>
+            <Badge key={profile.slug} color={isRunning ? 'amber' : 'slate'} variant={isRunning ? 'light' : 'outline'}>
               {profile.shortTitle || profile.slug}
               {isRunning ? ' ...' : ''}
-            </Text>
+            </Badge>
           );
         })}
       </Group>

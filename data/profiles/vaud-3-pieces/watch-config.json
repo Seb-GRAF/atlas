@@ -1,0 +1,137 @@
+{
+  "name": "Vaud 3 pieces",
+  "shortTitle": "Vaud 3 pieces",
+  "areas": [
+    {
+      "slug": "lausanne",
+      "label": "Lausanne",
+      "canton": "vaud"
+    },
+    {
+      "slug": "prilly",
+      "label": "Prilly",
+      "canton": "vaud"
+    },
+    {
+      "slug": "pully",
+      "label": "Pully",
+      "canton": "vaud"
+    },
+    {
+      "slug": "epalinges",
+      "label": "Epalinges",
+      "canton": "vaud"
+    },
+    {
+      "slug": "ecublens-vd",
+      "label": "Ecublens VD",
+      "canton": "vaud"
+    },
+    {
+      "slug": "bussigny",
+      "label": "Bussigny",
+      "canton": "vaud"
+    },
+    {
+      "slug": "morges",
+      "label": "Morges",
+      "canton": "vaud"
+    },
+    {
+      "slug": "cheseaux-sur-lausanne",
+      "label": "Cheseaux-sur-Lausanne",
+      "canton": "vaud"
+    },
+    {
+      "slug": "romanel-sur-lausanne",
+      "label": "Romanel-sur-Lausanne",
+      "canton": "vaud"
+    },
+    {
+      "slug": "etagnieres",
+      "label": "Etagnières",
+      "canton": "vaud"
+    },
+    {
+      "slug": "cugy-vd",
+      "label": "Cugy VD",
+      "canton": "vaud"
+    },
+    {
+      "slug": "mont-sur-lausanne",
+      "label": "Le Mont-sur-Lausanne",
+      "canton": "vaud"
+    },
+    {
+      "slug": "chalet-a-gobet",
+      "label": "Chalet-à-Gobet",
+      "canton": "vaud"
+    },
+    {
+      "slug": "saint-sulpice-vd",
+      "label": "Saint-Sulpice VD",
+      "canton": "vaud"
+    }
+  ],
+  "pagesPerArea": 2,
+  "sources": {
+    "immobilier": true,
+    "flatfox": true,
+    "naef": true,
+    "bernardNicod": true,
+    "retraitesListings": true,
+    "retraitesProjets": true,
+    "anibis": true,
+    "facebookMarketplace": true
+  },
+  "facebookMarketplace": {
+    "searchUrl": "https://www.facebook.com/marketplace/108211865877609/search/?minPrice=900&maxPrice=2500&daysSinceListed=2&query=louer%20appartement&exact=false&sortBy=creation_time_descend"
+  },
+  "flatfox": {
+    "maxPagesPerArea": 3,
+    "recheckKnownIdsLimit": 20
+  },
+  "anibis": {
+    "sorting": "newest",
+    "maxPagesPerSearchUrl": 3,
+    "trustSearchUrlFilters": true,
+    "runAreaQueries": false,
+    "searchUrls": [
+      "https://www.anibis.ch/fr/q/immobilier-vaud/Ak8CqcmVhbEVzdGF0ZZTAkZOvcmVhbEVzdGF0ZVJvb21zA8tADAAAAAAAAJGUpXByaWNlws0F3M0I_JGTqGxvY2F0aW9ur2dlby1jYW50b24tdmF1ZMA?sorting=newest&page=1"
+    ]
+  },
+  "filters": {
+    "minTotalChf": 1500,
+    "maxTotalChf": 2200,
+    "maxTotalHardChf": 2300,
+    "maxPearlTotalChf": 2300,
+    "minRoomsPreferred": 3,
+    "minSurfaceM2Preferred": 0,
+    "allowMissingSurface": true,
+    "pearl": {
+      "enabled": true,
+      "minRooms": 3,
+      "minSurfaceM2": 50,
+      "keywords": [
+        "renove",
+        "renovee",
+        "rénové",
+        "rénovée",
+        "balcon",
+        "terrasse",
+        "calme"
+      ],
+      "minHits": 1
+    },
+    "excludedObjectTypeKeywords": [
+      "chambre",
+      "colocation",
+      "wg"
+    ],
+    "missingScansBeforeRemoved": 2,
+    "maxPublishedAgeDays": 30
+  },
+  "preferences": {
+    "workplaceAddress": null
+  }
+}

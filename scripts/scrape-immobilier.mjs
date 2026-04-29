@@ -54,7 +54,21 @@ const {
   routeCachePath: ROUTE_CACHE_PATH
 } = profilePaths(PROFILE);
 
-const STATUSES = ['À contacter', 'Visite', 'Dossier', 'Relance', 'Accepté', 'Refusé', 'Sans réponse'];
+const STATUS_WORKFLOW_VERSION = 2;
+const STATUSES = [
+  'À trier',
+  'À contacter',
+  'Contacté',
+  'Visite prévue',
+  'Dossier à envoyer',
+  'Dossier envoyé',
+  'Relance à faire',
+  'Accepté',
+  'Écartée',
+  'Refus régie'
+];
+const PROGRESS_PREFIX = '__SCAN_PROGRESS__';
+const PROGRESS_ENABLED = process.env.SCAN_PROGRESS === '1';
 const SOURCE_PRIORITY = {
   'immobilier.ch': 30,
   'naef.ch': 27,
@@ -63,6 +77,36 @@ const SOURCE_PRIORITY = {
   'retraitespopulaires.ch': 18,
   'anibis.ch': 15
 };
+
+function emitProgress(payload) {
+  if (!PROGRESS_ENABLED) return;
+  console.log(`${PROGRESS_PREFIX}${JSON.stringify({ ...payload, at: new Date().toISOString() })}`);
+}
+
+function buildProgressPlan(config) {
+  const areas = Array.isArray(config?.areas) ? config.areas : [];
+  const pagesPerArea = Math.max(1, Number(config?.pagesPerArea || 1));
+  const steps = [];
+
+  for (const area of areas) {
+    const label = String(area?.label || area?.slug || 'zone').trim();
+    for (let page = 1; page <= pagesPerArea; page += 1) {
+      steps.push(`immobilier.ch · ${label} · page ${page}`);
+    }
+  }
+
+  if (config.sources?.flatfox !== false) steps.push('flatfox.ch');
+  if (config.sources?.naef !== false) steps.push('naef.ch');
+  if (config.sources?.bernardNicod !== false) steps.push('bernard-nicod.ch');
+  if (config.sources?.retraitesListings !== false) steps.push('Retraites Populaires');
+  if (config.sources?.anibis !== false) steps.push('anibis.ch');
+  steps.push('Préparation des annonces');
+  if (config.sources?.flatfox !== false) steps.push('Vérification Flatfox');
+  steps.push('Tri et déduplication');
+  steps.push('Images et sauvegarde');
+
+  return steps;
+}
 
 const DEFAULT_NON_SPECULATIVE_GROUPS = [];
 
@@ -155,6 +199,39 @@ function uniqueStrings(values = []) {
   return out;
 }
 
+function preferLargerImageUrl(value = '') {
+  const clean = String(value || '').trim();
+  if (!isHttpUrl(clean)) return clean;
+
+  try {
+    const url = new URL(clean);
+    const host = url.hostname.toLowerCase();
+
+    if (host.endsWith('immobilier.ch')) {
+      url.pathname = url.pathname.replace(/\/images\/NewThumbnail\//i, '/images/full/');
+      return url.toString();
+    }
+
+    if (host === 'cdn.flatfox.ch') {
+      url.pathname = url.pathname.replace(/^\/t_(?:listing_card_\d+x\d+|size_[a-z])\//i, '/');
+      return url.toString();
+    }
+
+    if (host === 'c.anibis.ch') {
+      url.pathname = url.pathname.replace(/^\/thumbnail\//i, '/big/');
+      return url.toString();
+    }
+  } catch {
+    return clean;
+  }
+
+  return clean;
+}
+
+function preferLargerImageUrls(values = []) {
+  return uniqueStrings(values.map((value) => preferLargerImageUrl(value)));
+}
+
 function localImageUrlsFromItem(item = {}) {
   return uniqueStrings([
     ...(Array.isArray(item?.imageUrlsLocal) ? item.imageUrlsLocal : []),
@@ -165,9 +242,9 @@ function localImageUrlsFromItem(item = {}) {
 
 function remoteImageUrlsFromItem(item = {}) {
   const explicit = uniqueStrings(Array.isArray(item?.imageUrlsRemote) ? item.imageUrlsRemote : []);
-  if (explicit.length) return explicit.filter((x) => isHttpUrl(x));
+  if (explicit.length) return preferLargerImageUrls(explicit.filter((x) => isHttpUrl(x)));
 
-  return uniqueStrings([
+  return preferLargerImageUrls([
     ...((Array.isArray(item?.imageUrls) ? item.imageUrls : []).filter((x) => isHttpUrl(x))),
     ...(isHttpUrl(item?.imageUrl) ? [item.imageUrl] : [])
   ]);
@@ -175,7 +252,7 @@ function remoteImageUrlsFromItem(item = {}) {
 
 function applyListingImageFields(item = {}, { localUrls = [], remoteUrls = [] } = {}) {
   const local = uniqueStrings(localUrls);
-  const remote = uniqueStrings(remoteUrls.filter((x) => isHttpUrl(x)));
+  const remote = preferLargerImageUrls(remoteUrls.filter((x) => isHttpUrl(x)));
   const display = local.length ? local : remote;
 
   item.imageUrlsLocal = local;
@@ -252,7 +329,7 @@ async function localizeVisibleListingImages(listings = [], config = {}) {
     }
 
     applyListingImageFields(item, {
-      localUrls: [...preservedLocal, ...localized].slice(0, maxPerListing),
+      localUrls: [...localized, ...preservedLocal].slice(0, maxPerListing),
       remoteUrls
     });
   }
@@ -416,76 +493,6 @@ function toAbsoluteUrlForHost(value = '', host = '') {
   return `${base}/${clean}`;
 }
 
-function computeScore(item, config) {
-  const budget = config.filters?.maxTotalChf ?? 1400;
-  const minRooms = config.filters?.minRoomsPreferred ?? 2;
-  let score = 0;
-  const reasons = [];
-
-  const listingStage = String(item?.listingStage || '').toLowerCase();
-  if (listingStage === 'off_market') {
-    score += 20;
-    reasons.push('Stage: +20 (signal off-market)');
-  } else if (listingStage === 'early_market') {
-    score += 8;
-    reasons.push('Stage: +8 (direct régie)');
-  }
-
-  if (item.totalChf != null) {
-    const total = Number(item.totalChf);
-
-    if (total <= budget) {
-      score += 45;
-      reasons.push(`Budget: +45 (<= CHF ${budget})`);
-    } else {
-      const over = total - budget;
-      const penalty = Math.max(1, Math.floor(Math.pow(over / 50, 1.12)));
-      const budgetScore = Math.max(-20, 45 - penalty);
-      score += budgetScore;
-      reasons.push(`Budget: ${budgetScore >= 0 ? '+' : ''}${budgetScore} (CHF +${Math.round(over)} au-dessus du budget)`);
-    }
-  } else {
-    reasons.push('Budget: 0 (loyer total inconnu)');
-  }
-
-  const rooms = item.rooms ?? 0;
-  if (rooms >= minRooms) {
-    score += 30;
-    reasons.push(`Pièces: +30 (${rooms} >= ${minRooms})`);
-  } else if (rooms >= 1.5) {
-    score += 15;
-    reasons.push(`Pièces: +15 (${rooms}, option transition)`);
-  } else {
-    score += 5;
-    reasons.push(`Pièces: +5 (petite surface)`);
-  }
-
-  if (/studio/i.test(item.objectType || '')) {
-    score -= 4;
-    reasons.push('Type: -4 (studio)');
-  }
-
-  const areaKey = normalizeAreaToken(item.area || '');
-  if (areaKey === 'vevey') {
-    score += 5;
-    reasons.push('Zone: +5 (Vevey)');
-  }
-  if (areaKey === 'la tour peilz') {
-    score += 4;
-    reasons.push('Zone: +4 (La Tour-de-Peilz)');
-  }
-  if (areaKey === 'corseaux') {
-    score += 4;
-    reasons.push('Zone: +4 (Corseaux)');
-  }
-  if (areaKey === 'corsier sur vevey') {
-    score += 4;
-    reasons.push('Zone: +4 (Corsier-sur-Vevey)');
-  }
-
-  return { score, reasons };
-}
-
 function clearDistanceFields(item) {
   item.distanceKm = null;
   item.distanceText = '';
@@ -551,41 +558,44 @@ function isSizeEligible(item, config) {
   return surface >= minSurface;
 }
 
-function isPearl(item, config) {
-  const pearlCfg = config.filters?.pearl || {};
-  if (pearlCfg.enabled === false) return false;
-
-  const hardBudget = config.filters?.maxTotalHardChf ?? 1450;
-  const cap = config.filters?.maxPearlTotalChf ?? 1550;
-  const total = item.totalChf;
-  if (total == null || total <= hardBudget || total > cap) return false;
-
-  const minRooms = pearlCfg.minRooms ?? 2;
-  const minSurface = pearlCfg.minSurfaceM2 ?? 50;
-  const rooms = item.rooms ?? 0;
-  const surface = item.surfaceM2 ?? 0;
-  if (rooms < minRooms || surface < minSurface) return false;
-
-  const text = `${item.title || ''} ${item.objectType || ''} ${item.address || ''}`.toLowerCase();
-  const keywords = Array.isArray(pearlCfg.keywords) && pearlCfg.keywords.length
-    ? pearlCfg.keywords
-    : ['renove', 'rénové', 'balcon', 'terrasse', 'vue', 'quartier paisible', 'lac', 'centre'];
-  const minHits = pearlCfg.minHits ?? 1;
-  const hits = keywords.filter((s) => text.includes(String(s).toLowerCase())).length;
-
-  return hits >= minHits;
-}
-
 function normalizeStatus(status = '') {
   const s = String(status || '').trim();
 
-  if (!s || s === 'À contacter') return 'À contacter';
-  if (['Visite', 'Visite demandée', 'Visite planifiée', 'Visité'].includes(s)) return 'Visite';
-  if (['Dossier', 'Dossier prêt à envoyer', 'Dossier envoyé'].includes(s)) return 'Dossier';
-  if (['Relance', 'Relance J+2'].includes(s)) return 'Relance';
-  if (['Accepté', 'Refusé', 'Sans réponse'].includes(s)) return s;
+  if (!s || s === 'À trier') return 'À trier';
+  if (s === 'À contacter') return 'À contacter';
+  if (['Sauvegardé', 'Gardée'].includes(s)) return 'À contacter';
+  if (['Contacté', 'Contactée'].includes(s)) return 'Contacté';
+  if (['Visite', 'Visite demandée', 'Visite planifiée', 'Visité', 'Visite prévue'].includes(s)) return 'Visite prévue';
+  if (['Dossier', 'Dossier prêt à envoyer', 'Dossier à envoyer'].includes(s)) return 'Dossier à envoyer';
+  if (s === 'Dossier envoyé') return 'Dossier envoyé';
+  if (['Relance', 'Relance J+2', 'Sans réponse', 'Relance à faire'].includes(s)) return 'Relance à faire';
+  if (['Refusé', 'Écartée'].includes(s)) return 'Écartée';
+  if (s === 'Refus régie') return 'Refus régie';
+  if (s === 'Accepté') return 'Accepté';
 
-  return 'À contacter';
+  return 'À trier';
+}
+
+function normalizeLegacyStatus(status = '') {
+  const s = String(status || '').trim();
+  if (!s || s === 'À contacter') return 'À trier';
+  return normalizeStatus(s);
+}
+
+function migrateTrackerStatuses(tracker) {
+  if (!tracker || typeof tracker !== 'object') return tracker;
+  const legacy = Number(tracker.statusWorkflowVersion || 1) < STATUS_WORKFLOW_VERSION;
+  const normalize = legacy ? normalizeLegacyStatus : normalizeStatus;
+
+  if (Array.isArray(tracker.listings)) {
+    for (const item of tracker.listings) {
+      item.status = normalize(item.status);
+    }
+  }
+
+  tracker.statuses = STATUSES;
+  tracker.statusWorkflowVersion = STATUS_WORKFLOW_VERSION;
+  return tracker;
 }
 
 function normalizeDateParts(day, month, year) {
@@ -1233,7 +1243,7 @@ function isAnibisRentalListing(raw, frSlug, title, description, formattedPriceTe
   return hasRentalSignal || isMonthlyPrice;
 }
 
-function parseAnibisListing(raw, fallbackAreaLabel = '') {
+function parseAnibisListing(raw, fallbackAreaLabel = '', options = {}) {
   const sourceId = String(raw?.listingID || '').trim();
   if (!sourceId) return null;
 
@@ -1241,7 +1251,11 @@ function parseAnibisListing(raw, fallbackAreaLabel = '') {
   if (categoryId !== 'realestate') return null;
 
   const frSlug = String(raw?.seoInformation?.frSlug || '').trim();
-  if (!frSlug.includes('/immobilier/appartements/')) return null;
+  if (options.trustSearchUrlFilters) {
+    if (!frSlug.includes('/immobilier/')) return null;
+  } else if (!frSlug.includes('/immobilier/appartements/')) {
+    return null;
+  }
 
   const listingPath = frSlug.replace(/^\/+|\/+$/g, '');
   const url = listingPath ? `https://www.anibis.ch/fr/vi/${listingPath}/${sourceId}` : null;
@@ -1250,7 +1264,7 @@ function parseAnibisListing(raw, fallbackAreaLabel = '') {
   const description = stripTags(raw?.body || '');
   const formattedPriceText = stripTags(raw?.formattedPrice || '');
 
-  if (!isAnibisRentalListing(raw, frSlug, title, description, formattedPriceText)) {
+  if (!options.trustSearchUrlFilters && !isAnibisRentalListing(raw, frSlug, title, description, formattedPriceText)) {
     return null;
   }
 
@@ -1264,11 +1278,11 @@ function parseAnibisListing(raw, fallbackAreaLabel = '') {
 
   const totalChf = parseAnibisPrice(raw?.formattedPrice);
   const imageUrls = [...new Set([
-    toAbsoluteUrlForHost(raw?.thumbnail?.normalRendition?.src || '', 'https://www.anibis.ch'),
-    toAbsoluteUrlForHost(raw?.thumbnail?.retinaRendition?.src || '', 'https://www.anibis.ch')
+    toAbsoluteUrlForHost(raw?.thumbnail?.retinaRendition?.src || '', 'https://www.anibis.ch'),
+    toAbsoluteUrlForHost(raw?.thumbnail?.normalRendition?.src || '', 'https://www.anibis.ch')
   ].filter(Boolean))].slice(0, 6);
 
-  return {
+  const result = {
     id: `anibis:${sourceId}`,
     sourceId,
     url,
@@ -1287,6 +1301,12 @@ function parseAnibisListing(raw, fallbackAreaLabel = '') {
     source: 'anibis.ch',
     publishedAt: raw?.timestamp || null
   };
+
+  if (options.trustSearchUrlFilters) {
+    result.anibisSearchUrlMatch = true;
+  }
+
+  return result;
 }
 
 function isStoredAnibisSaleListing(item) {
@@ -1309,6 +1329,12 @@ function isStoredAnibisSaleListing(item) {
   ].some((signal) => haystack.includes(signal));
 }
 
+function isTrustedAnibisSearchUrlResult(item, config = {}) {
+  return String(item?.source || '') === 'anibis.ch'
+    && item?.anibisSearchUrlMatch === true
+    && config?.anibis?.trustSearchUrlFilters !== false;
+}
+
 function withPageParam(url, page) {
   const u = new URL(url);
   if (page > 1) {
@@ -1319,12 +1345,62 @@ function withPageParam(url, page) {
   return u.toString();
 }
 
-async function scrapeAnibisQuery(query, fallbackAreaLabel = '', maxPages = 2, requestOptions = {}) {
-  const firstUrl = `https://www.anibis.ch/fr/q?query=${encodeURIComponent(query)}`;
+function normalizeAnibisSearchUrl(value = '', sorting = 'newest') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const url = new URL(raw, 'https://www.anibis.ch');
+  if (!/(^|\.)anibis\.ch$/i.test(url.hostname)) {
+    throw new Error(`Invalid Anibis search URL host: ${url.hostname}`);
+  }
+
+  const sortValue = String(sorting || '').trim();
+  if (sortValue && !url.searchParams.has('sorting')) {
+    url.searchParams.set('sorting', sortValue);
+  }
+
+  return url.toString();
+}
+
+function buildAnibisQueryUrl(query, sorting = 'newest') {
+  const url = new URL('https://www.anibis.ch/fr/q');
+  url.searchParams.set('query', query);
+
+  const sortValue = String(sorting || '').trim();
+  if (sortValue) {
+    url.searchParams.set('sorting', sortValue);
+  }
+
+  return url.toString();
+}
+
+function configuredAnibisSearchUrls(config) {
+  const values = [];
+  const anibisConfig = config?.anibis || {};
+
+  if (typeof anibisConfig.searchUrl === 'string') {
+    values.push(anibisConfig.searchUrl);
+  }
+
+  if (Array.isArray(anibisConfig.searchUrls)) {
+    for (const item of anibisConfig.searchUrls) {
+      if (typeof item === 'string') values.push(item);
+      else if (item && typeof item.url === 'string') values.push(item.url);
+    }
+  }
+
+  const sorting = String(anibisConfig.sorting || 'newest').trim();
+  return [...new Set(values.map((url) => normalizeAnibisSearchUrl(url, sorting)).filter(Boolean))];
+}
+
+async function scrapeAnibisSearchUrl(searchUrl, fallbackAreaLabel = '', maxPages = 2, requestOptions = {}) {
+  const firstUrl = normalizeAnibisSearchUrl(searchUrl, requestOptions.sorting || 'newest');
   const firstRes = await fetchHtmlWithRedirectsRetry(firstUrl, requestOptions);
   const firstData = parseAnibisSearchDataFromHtml(firstRes.html);
 
-  if (!firstData) return [];
+  if (!firstData) {
+    throw new Error(`No Anibis search payload found at ${firstRes.finalUrl || firstUrl}`);
+  }
 
   const perPage = Math.max(1, Number(firstData?.listings?.edges?.length || 30));
   const totalCount = Math.max(0, Number(firstData?.listings?.totalCount || perPage));
@@ -1334,7 +1410,9 @@ async function scrapeAnibisQuery(query, fallbackAreaLabel = '', maxPages = 2, re
   const parsePageData = (data) => {
     const edges = Array.isArray(data?.listings?.edges) ? data.listings.edges : [];
     for (const edge of edges) {
-      const parsed = parseAnibisListing(edge?.node, fallbackAreaLabel);
+      const parsed = parseAnibisListing(edge?.node, fallbackAreaLabel, {
+        trustSearchUrlFilters: requestOptions.trustSearchUrlFilters === true
+      });
       if (parsed) out.push(parsed);
     }
   };
@@ -1348,11 +1426,16 @@ async function scrapeAnibisQuery(query, fallbackAreaLabel = '', maxPages = 2, re
       const pageData = parseAnibisSearchDataFromHtml(pageRes.html);
       parsePageData(pageData);
     } catch (err) {
-      console.error(`WARN anibis query="${query}" page=${page}: ${err.message}`);
+      console.error(`WARN anibis url="${firstUrl}" page=${page}: ${err.message}`);
     }
   }
 
   return out;
+}
+
+async function scrapeAnibisQuery(query, fallbackAreaLabel = '', maxPages = 2, requestOptions = {}) {
+  const firstUrl = buildAnibisQueryUrl(query, requestOptions.sorting || 'newest');
+  return scrapeAnibisSearchUrl(firstUrl, fallbackAreaLabel, maxPages, requestOptions);
 }
 
 async function scrapeAnibisListings(config) {
@@ -1360,28 +1443,52 @@ async function scrapeAnibisListings(config) {
   const areas = Array.isArray(config?.areas) ? config.areas : [];
   const targetAreaSet = buildTargetAreaSet(areas);
   const maxPagesPerArea = Math.max(1, Number(config?.anibis?.maxPagesPerArea ?? 2));
+  const maxPagesPerSearchUrl = Math.max(1, Number(config?.anibis?.maxPagesPerSearchUrl ?? maxPagesPerArea));
   const querySuffix = String(config?.anibis?.querySuffix || 'appartement louer').trim();
+  const sorting = String(config?.anibis?.sorting || 'newest').trim();
+  const filterSearchUrlsByAreas = config?.anibis?.filterSearchUrlsByAreas === true;
+  const trustSearchUrlFilters = config?.anibis?.trustSearchUrlFilters !== false;
+  const runAreaQueries = config?.anibis?.runAreaQueries !== false;
 
   const requestOptions = {
     attempts: Math.max(1, Number(config?.anibis?.requestRetries ?? 3)),
     maxRedirects: Math.max(1, Number(config?.anibis?.maxRedirects ?? 5)),
-    baseDelayMs: Math.max(0, Number(config?.anibis?.retryBackoffMs ?? 1200))
+    baseDelayMs: Math.max(0, Number(config?.anibis?.retryBackoffMs ?? 1200)),
+    sorting,
+    trustSearchUrlFilters: false
   };
 
-  for (const area of areas) {
-    const areaLabel = String(area?.label || '').trim();
-    if (!areaLabel) continue;
-
-    const query = `${areaLabel} ${querySuffix}`.trim();
-
+  for (const searchUrl of configuredAnibisSearchUrls(config)) {
     try {
-      const listings = await scrapeAnibisQuery(query, areaLabel, maxPagesPerArea, requestOptions);
+      const listings = await scrapeAnibisSearchUrl(searchUrl, '', maxPagesPerSearchUrl, {
+        ...requestOptions,
+        trustSearchUrlFilters
+      });
       for (const item of listings) {
-        if (!isTargetAreaCity(item.area || '', targetAreaSet)) continue;
+        if (filterSearchUrlsByAreas && !isTargetAreaCity(item.area || '', targetAreaSet)) continue;
         out.push(item);
       }
     } catch (err) {
-      console.error(`WARN anibis area="${areaLabel}": ${err.message}`);
+      console.error(`WARN anibis url="${searchUrl}": ${err.message}`);
+    }
+  }
+
+  if (runAreaQueries) {
+    for (const area of areas) {
+      const areaLabel = String(area?.label || '').trim();
+      if (!areaLabel) continue;
+
+      const query = `${areaLabel} ${querySuffix}`.trim();
+
+      try {
+        const listings = await scrapeAnibisQuery(query, areaLabel, maxPagesPerArea, requestOptions);
+        for (const item of listings) {
+          if (!isTargetAreaCity(item.area || '', targetAreaSet)) continue;
+          out.push(item);
+        }
+      } catch (err) {
+        console.error(`WARN anibis area="${areaLabel}": ${err.message}`);
+      }
     }
   }
 
@@ -1415,6 +1522,7 @@ function parseListingsFromHtml(html, areaLabel) {
     const imageUrls = [...new Set(
       imageMatches
         .map((m) => toAbsoluteUrl(m[1]))
+        .map((x) => preferLargerImageUrl(x))
         .filter((x) => x && !/logo[-_]?small|\/logo\./i.test(String(x)))
     )].slice(0, 6);
     const imageUrl = imageUrls[0] || null;
@@ -1657,9 +1765,9 @@ async function resolveImmobilierSlugForArea(area = {}, config = {}) {
         }
       }
 
-      const score = strictMatches * 100 + looseMatches;
-      if (!best || score > best.score) {
-        best = { slug, score, strictMatches, looseMatches };
+      const matchRank = strictMatches * 100 + looseMatches;
+      if (!best || matchRank > best.matchRank) {
+        best = { slug, matchRank, strictMatches, looseMatches };
       }
 
       // Fast path: current slug already returns matching city names.
@@ -1743,7 +1851,7 @@ function parseFlatfoxListing(raw, fallbackAreaLabel = '') {
     (Array.isArray(raw?.images) ? raw.images : [])
       .map((img) => {
         if (img && typeof img === 'object') {
-          return toAbsoluteUrlForHost(img.url_listing_search || img.url_thumb_m || img.url || '', 'https://flatfox.ch');
+          return toAbsoluteUrlForHost(img.url || img.url_listing_search || img.url_thumb_m || '', 'https://flatfox.ch');
         }
         return null;
       })
@@ -2220,13 +2328,13 @@ function parseRetraitesMarker(marker = {}) {
   const chargesChf = toPositiveNumber(attrs?.price_extra) ?? 0;
   const totalChf = rentChf != null ? rentChf + (chargesChf || 0) : null;
 
-  // Images: prefer medium > large > originals (medium loads fastest)
+  // Images: prefer originals > large > medium for the dashboard lightbox.
   const pictureSizes = Array.isArray(attrs?.pictures?.sizes) ? attrs.pictures.sizes : [];
   const medium = pictureSizes.flatMap((s) => Array.isArray(s?.m) ? s.m : []);
   const large = pictureSizes.flatMap((s) => Array.isArray(s?.l) ? s.l : []);
   const originals = Array.isArray(attrs?.pictures?.originals) ? attrs.pictures.originals : [];
 
-  const imageUrls = [...new Set([...medium, ...large, ...originals]
+  const imageUrls = [...new Set([...originals, ...large, ...medium]
     .map((x) => toAbsoluteUrlForHost(x, 'https://immobilier2.retraitespopulaires.ch'))
     .filter(Boolean))].slice(0, 8);
 
@@ -2355,16 +2463,16 @@ function buildCrossSourceDedupKey(item) {
 }
 
 function listingQualityRank(item, trackerMap) {
-  let score = 0;
+  let rank = 0;
 
-  if (trackerMap?.has(String(item?.id))) score += 1000;
-  score += SOURCE_PRIORITY[item?.source] || 0;
-  score += Math.min(Array.isArray(item?.imageUrls) ? item.imageUrls.length : 0, 6);
-  if (toPositiveNumber(item?.surfaceM2) != null) score += 2;
-  if (toPositiveNumber(item?.totalChf) != null) score += 2;
-  if (parseFlatfoxPriceFromText(item?.priceRaw || '') != null) score += 1;
+  if (trackerMap?.has(String(item?.id))) rank += 1000;
+  rank += SOURCE_PRIORITY[item?.source] || 0;
+  rank += Math.min(Array.isArray(item?.imageUrls) ? item.imageUrls.length : 0, 6);
+  if (toPositiveNumber(item?.surfaceM2) != null) rank += 2;
+  if (toPositiveNumber(item?.totalChf) != null) rank += 2;
+  if (parseFlatfoxPriceFromText(item?.priceRaw || '') != null) rank += 1;
 
-  return score;
+  return rank;
 }
 
 function dedupeCrossSourceListings(items = [], trackerMap) {
@@ -2373,6 +2481,11 @@ function dedupeCrossSourceListings(items = [], trackerMap) {
   const removedIds = new Set();
 
   for (const item of items) {
+    if (item?.anibisSearchUrlMatch === true) {
+      passthrough.push({ ...item, duplicateSources: [item.source] });
+      continue;
+    }
+
     const key = buildCrossSourceDedupKey(item);
     if (!key) {
       passthrough.push({ ...item, duplicateSources: [item.source] });
@@ -2490,7 +2603,6 @@ function makeDefaultConfig(profile, base = null) {
     filters: {
       maxTotalChf: isSaintMaurice ? 1700 : 1400,
       maxTotalHardChf: isSaintMaurice ? 1700 : (isFribourg ? 1650 : 1550),
-      maxPearlTotalChf: isSaintMaurice ? 1700 : (isFribourg ? 1750 : 1650),
       maxPublishedAgeDays: (isFribourg || isSaintMaurice) ? 20 : null,
       minRoomsPreferred: isSaintMaurice ? 3 : (isFribourg ? 2.5 : 2),
       minSurfaceM2Preferred: isFribourg ? 50 : 0,
@@ -2530,24 +2642,26 @@ function makeDefaultConfig(profile, base = null) {
     ...(template.filters || {}),
     maxTotalChf: Number(template.filters?.maxTotalChf ?? (isSaintMaurice ? 1700 : 1400)),
     maxTotalHardChf: Number(template.filters?.maxTotalHardChf ?? (isSaintMaurice ? 1700 : (isFribourg ? 1650 : 1550))),
-    maxPearlTotalChf: Number(template.filters?.maxPearlTotalChf ?? (isSaintMaurice ? 1700 : (isFribourg ? 1750 : 1650))),
     minRoomsPreferred: Number(template.filters?.minRoomsPreferred ?? (isSaintMaurice ? 3 : (isFribourg ? 2.5 : 2))),
     maxPublishedAgeDays: (isFribourg || isSaintMaurice)
       ? Number(template.filters?.maxPublishedAgeDays ?? 20)
       : (template.filters?.maxPublishedAgeDays ?? null)
   };
+  delete template.filters.maxPearlTotalChf;
+  delete template.filters.pearl;
 
   if (isSaintMaurice) {
     template.filters = {
       ...(template.filters || {}),
       maxTotalChf: Number(template.filters?.maxTotalChf ?? 1700),
       maxTotalHardChf: Number(template.filters?.maxTotalHardChf ?? 1700),
-      maxPearlTotalChf: Number(template.filters?.maxPearlTotalChf ?? 1700),
       minRoomsPreferred: Number(template.filters?.minRoomsPreferred ?? 3),
       maxPublishedAgeDays: template.filters?.maxPublishedAgeDays == null
         ? 20
         : Number(template.filters?.maxPublishedAgeDays)
     };
+    delete template.filters.maxPearlTotalChf;
+    delete template.filters.pearl;
 
     template.preferences = {
       ...(template.preferences || {}),
@@ -2622,12 +2736,13 @@ async function main() {
       ...(config.filters || {}),
       maxTotalChf: Number(config.filters?.maxTotalChf ?? 1700),
       maxTotalHardChf: Number(config.filters?.maxTotalHardChf ?? 1700),
-      maxPearlTotalChf: Number(config.filters?.maxPearlTotalChf ?? 1700),
       minRoomsPreferred: Number(config.filters?.minRoomsPreferred ?? 3),
       maxPublishedAgeDays: config.filters?.maxPublishedAgeDays == null
         ? 20
         : Number(config.filters?.maxPublishedAgeDays)
     };
+    delete config.filters.maxPearlTotalChf;
+    delete config.filters.pearl;
 
     const existingWorkAddress = config.preferences?.workplaceAddress || config.preferences?.workAddress;
     config.preferences = {
@@ -2639,6 +2754,15 @@ async function main() {
     delete config.preferences.transportToLausanne;
   }
 
+  const progressSteps = buildProgressPlan(config);
+  let progressDone = 0;
+  const startStep = (currentStep) => emitProgress({ done: progressDone, total: progressSteps.length, currentStep });
+  const completeStep = (currentStep) => {
+    progressDone = Math.min(progressSteps.length, progressDone + 1);
+    emitProgress({ done: progressDone, total: progressSteps.length, currentStep });
+  };
+  emitProgress({ done: 0, total: progressSteps.length, currentStep: 'Préparation du scan' });
+
   const missingScansBeforeRemoved = Math.max(1, Number(config.filters?.missingScansBeforeRemoved ?? 2));
 
   const previousLatest = await readJsonSafe(LATEST_PATH, { all: [] });
@@ -2647,8 +2771,10 @@ async function main() {
   const tracker = await readJsonSafe(TRACKER_PATH, {
     createdAt: new Date().toISOString(),
     statuses: STATUSES,
+    statusWorkflowVersion: STATUS_WORKFLOW_VERSION,
     listings: []
   });
+  migrateTrackerStatuses(tracker);
 
   const trackerMap = toMap(tracker.listings || []);
   const targetAreaSet = buildTargetAreaSet(config.areas || []);
@@ -2666,6 +2792,8 @@ async function main() {
     }
 
     for (let page = 1; page <= (config.pagesPerArea || 1); page++) {
+      const progressLabel = `immobilier.ch · ${areaLabel || configuredSlug || 'zone'} · page ${page}`;
+      startStep(progressLabel);
       const url = `https://www.immobilier.ch/fr/louer/appartement/${canton}/${immobilierSlug || configuredSlug}/page-${page}`;
       try {
         const html = await fetchHtml(url);
@@ -2678,34 +2806,48 @@ async function main() {
         }
       } catch (err) {
         console.error(`WARN ${url}: ${err.message}`);
+      } finally {
+        completeStep(progressLabel);
       }
     }
   }
 
   if (config.sources?.flatfox !== false) {
+    startStep('flatfox.ch');
     const flatfoxItems = await scrapeFlatfoxListings(config);
     scraped.push(...flatfoxItems);
+    completeStep('flatfox.ch');
   }
 
   if (config.sources?.naef !== false) {
+    startStep('naef.ch');
     const naefItems = await scrapeNaefListings(config);
     scraped.push(...naefItems);
+    completeStep('naef.ch');
   }
 
   if (config.sources?.bernardNicod !== false) {
+    startStep('bernard-nicod.ch');
     const bernardItems = await scrapeBernardNicodListings(config);
     scraped.push(...bernardItems);
+    completeStep('bernard-nicod.ch');
   }
 
   if (config.sources?.retraitesListings !== false) {
+    startStep('Retraites Populaires');
     const rpListings = await scrapeRetraitesPopulairesListings(config);
     scraped.push(...rpListings);
+    completeStep('Retraites Populaires');
   }
 
   if (config.sources?.anibis !== false) {
+    startStep('anibis.ch');
     const anibisItems = await scrapeAnibisListings(config);
     scraped.push(...anibisItems);
+    completeStep('anibis.ch');
   }
+
+  startStep('Préparation des annonces');
 
   const dedupById = new Map();
   for (const item of scraped) {
@@ -2721,7 +2863,10 @@ async function main() {
     dedupById.set(key, incomingRank > existingRank ? item : existing);
   }
 
+  completeStep('Préparation des annonces');
+
   if (config.sources?.flatfox !== false) {
+    startStep('Vérification Flatfox');
     const recheckLimit = Math.max(0, Number(config.flatfox?.recheckKnownIdsLimit ?? 20));
     const missingKnownFlatfox = (tracker.listings || [])
       .filter((x) => x?.source === 'flatfox.ch' && x?.sourceId && !dedupById.has(String(x.id)))
@@ -2738,7 +2883,10 @@ async function main() {
         dedupById.set(key, recovered);
       }
     }
+    completeStep('Vérification Flatfox');
   }
+
+  startStep('Tri et déduplication');
 
   const { kept: crossSourceDeduped, removedIds: crossSourceRemovedIds } = dedupeCrossSourceListings([...dedupById.values()], trackerMap);
   const dedup = new Map(crossSourceDeduped.map((item) => [String(item.id), item]));
@@ -2758,7 +2906,6 @@ async function main() {
     const hardBudget = config.filters?.maxTotalHardChf ?? 1450;
     item.excludedType = isExcludedType(item, config);
     item.sizeEligible = isSizeEligible(item, config);
-    item.isPearl = isPearl(item, config);
     item.withinHardBudget = item.totalChf != null ? item.totalChf <= hardBudget : false;
     item.aboveMinBudget = minBudget <= 0 || (item.totalChf != null && item.totalChf >= minBudget);
 
@@ -2776,13 +2923,16 @@ async function main() {
     item.nonSpeculativeFilterReason = nonSpecMeta.reason;
 
     const isOffMarketListing = String(item.listingStage || '').toLowerCase() === 'off_market';
+    const trustedAnibisSearchUrlResult = isTrustedAnibisSearchUrlResult(item, config);
 
-    item.display = isOffMarketListing
+    item.display = trustedAnibisSearchUrlResult
+      ? true
+      : isOffMarketListing
       ? (!item.excludedType && item.locationEligible && item.nonSpeculativeEligible)
       : (!item.excludedType
         && item.sizeEligible
         && item.aboveMinBudget
-        && (item.withinHardBudget || item.isPearl)
+        && item.withinHardBudget
         && item.publicationEligible
         && item.locationEligible
         && item.nonSpeculativeEligible);
@@ -2839,7 +2989,7 @@ async function main() {
         distanceComputed: false,
         distanceFromWorkAddress: '',
         publishedAt: item.publishedAt || existing.publishedAt || null,
-        status: normalizeStatus(existing.status || 'À contacter'),
+        status: normalizeStatus(existing.status || 'À trier'),
         notes: mergeNotesWithEntryDate(existing.notes || '', entryDateText),
         firstSeenAt: existing.firstSeenAt || now,
         active: true,
@@ -2860,7 +3010,7 @@ async function main() {
         transitMinutes: toDurationMinutesOrNull(item.transitMinutes),
         transitText: toDurationMinutesOrNull(item.transitMinutes) != null ? `${Math.round(toDurationMinutesOrNull(item.transitMinutes))} min` : '',
         publishedAt: item.publishedAt || null,
-        status: 'À contacter',
+        status: 'À trier',
         notes: mergeNotesWithEntryDate('', entryDateText),
         firstSeenAt: now,
         active: true,
@@ -2938,7 +3088,6 @@ async function main() {
       const refreshed = {
         excludedType: isExcludedType(old, config),
         sizeEligible: isSizeEligible(old, config),
-        isPearl: isPearl(old, config),
         withinHardBudget: old.totalChf != null ? old.totalChf <= hardBudget : false,
         aboveMinBudget: minBudget <= 0 || (old.totalChf != null && old.totalChf >= minBudget),
         publishedAgeDays: publicationMeta.ageDays,
@@ -2950,14 +3099,17 @@ async function main() {
         nonSpeculativeFilterReason: nonSpecMeta.reason
       };
 
-      const isOffMarketListing = String(old.listingStage || '').toLowerCase() === 'off_market';
+    const isOffMarketListing = String(old.listingStage || '').toLowerCase() === 'off_market';
+    const trustedAnibisSearchUrlResult = isTrustedAnibisSearchUrlResult(old, config);
 
-      refreshed.display = isOffMarketListing
-        ? (!refreshed.excludedType && refreshed.locationEligible && refreshed.nonSpeculativeEligible)
-        : (!refreshed.excludedType
+    refreshed.display = trustedAnibisSearchUrlResult
+      ? true
+      : isOffMarketListing
+      ? (!refreshed.excludedType && refreshed.locationEligible && refreshed.nonSpeculativeEligible)
+      : (!refreshed.excludedType
           && refreshed.sizeEligible
           && refreshed.aboveMinBudget
-          && (refreshed.withinHardBudget || refreshed.isPearl)
+          && refreshed.withinHardBudget
           && refreshed.publicationEligible
           && refreshed.locationEligible
           && refreshed.nonSpeculativeEligible);
@@ -3036,17 +3188,16 @@ async function main() {
   }
 
   for (const item of merged) {
-    const scoreMeta = computeScore(item, config);
-    item.score = scoreMeta.score;
-    item.scoreBreakdown = scoreMeta.reasons;
-    item.scoreTooltip = [`Score: ${scoreMeta.score}`, ...scoreMeta.reasons].join(' · ');
+    delete item.isPearl;
+    delete item.score;
+    delete item.scoreBreakdown;
+    delete item.scoreTooltip;
   }
 
   merged.sort((a, b) => {
     const av = a.active ? 1 : 0;
     const bv = b.active ? 1 : 0;
     if (av !== bv) return bv - av;
-    if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
     return (a.totalChf || 999999) - (b.totalChf || 999999);
   });
 
@@ -3057,6 +3208,8 @@ async function main() {
   const visibleAll = merged.filter((x) => x.display !== false);
 
   // Archive images only while flats are still visible/active.
+  completeStep('Tri et déduplication');
+  startStep('Images et sauvegarde');
   await localizeVisibleListingImages(visibleActive, config);
 
   const matching = visibleActive;
@@ -3078,11 +3231,13 @@ async function main() {
     updatedAt: now,
     criteria: config,
     statuses: STATUSES,
+    statusWorkflowVersion: STATUS_WORKFLOW_VERSION,
     listings: merged
   };
 
   await fs.writeFile(TRACKER_PATH, JSON.stringify(newTracker, null, 2));
   await fs.writeFile(LATEST_PATH, JSON.stringify(latest, null, 2));
+  completeStep('Images et sauvegarde');
 
   console.log(makeSummary(latest));
 }

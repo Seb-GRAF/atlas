@@ -345,11 +345,6 @@ input:focus {
   gap: 6px;
 }
 
-.k-meta-top .score-track,
-.mobile-title .score-track {
-  width: 48px;
-}
-
 .k-price {
   font-size: 0.78rem;
   color: var(--muted);
@@ -574,96 +569,6 @@ a:hover {
   border: 1px solid rgba(111, 200, 181, 0.45);
 }
 
-.score-wrap,
-.score-mini {
-  display: inline-grid;
-  gap: 4px;
-  align-items: center;
-}
-
-.score-trigger {
-  cursor: pointer;
-}
-
-.score-trigger:focus-visible {
-  outline: 2px solid rgba(143, 240, 207, 0.72);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
-
-.score-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 34px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: #082319;
-  background: linear-gradient(125deg, #86f2cb, #bef5c9);
-  border: 1px solid rgba(131, 228, 187, 0.7);
-}
-
-.score-track {
-  width: 64px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(103, 177, 171, 0.26);
-  overflow: hidden;
-}
-
-.score-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #4fd4b8, #9af3b9);
-}
-
-.score-popover-floating {
-  position: fixed;
-  z-index: 2000;
-  min-width: 220px;
-  max-width: 320px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(144, 213, 198, 0.34);
-  background: linear-gradient(150deg, rgba(9, 28, 38, 0.98), rgba(7, 23, 31, 0.96));
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(4px) scale(0.98);
-  transition: opacity 0.08s ease, transform 0.08s ease;
-}
-
-.score-popover-floating.visible {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.score-pop-title {
-  font-size: 0.78rem;
-  font-weight: 800;
-  color: #b9ffe7;
-  margin-bottom: 6px;
-}
-
-.score-pop-list {
-  margin: 0;
-  padding-left: 16px;
-  display: grid;
-  gap: 4px;
-  color: #d1ebe7;
-  font-size: 0.74rem;
-  line-height: 1.35;
-}
-
-.score-pop-empty {
-  color: #97bcbb;
-  font-size: 0.73rem;
-}
-
 .urgency-badge {
   display: inline-flex;
   align-items: center;
@@ -745,13 +650,6 @@ a:hover {
   margin: 0;
   font-size: 0.95rem;
   line-height: 1.35;
-}
-
-.mobile-title .score-mini {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  vertical-align: middle;
 }
 
 .mobile-meta {

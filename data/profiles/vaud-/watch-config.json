@@ -1,0 +1,42 @@
+{
+  "name": "Vaud-",
+  "shortTitle": "Vaud-",
+  "areas": [
+    {
+      "slug": "vaud-",
+      "label": "Vaud-"
+    }
+  ],
+  "pagesPerArea": 2,
+  "sources": {
+    "immobilier": true,
+    "flatfox": true,
+    "naef": true,
+    "bernardNicod": true,
+    "retraitesListings": true,
+    "retraitesProjets": true,
+    "anibis": false
+  },
+  "flatfox": {
+    "maxPagesPerArea": 3,
+    "recheckKnownIdsLimit": 20
+  },
+  "filters": {
+    "maxTotalChf": 1400,
+    "maxTotalHardChf": 1550,
+    "maxPearlTotalChf": 1650,
+    "minRoomsPreferred": 2,
+    "minSurfaceM2Preferred": 0,
+    "allowStudioTransition": true,
+    "excludedObjectTypeKeywords": [
+      "chambre",
+      "colocation",
+      "wg"
+    ],
+    "missingScansBeforeRemoved": 2,
+    "maxPublishedAgeDays": null
+  },
+  "preferences": {
+    "workplaceAddress": null
+  }
+}

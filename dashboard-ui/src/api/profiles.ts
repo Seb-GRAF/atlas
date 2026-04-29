@@ -63,3 +63,10 @@ export async function getScanAllStatus(jobId: string) {
   const data = await apiRequest(`/api/scan-all-status?jobId=${encodeURIComponent(jobId)}`, ScanAllJobSchema);
   return requireOk(data, 'Impossible de lire le statut du scan');
 }
+
+export async function cancelScanAll(jobId: string) {
+  const data = await apiRequest(`/api/scan-all-cancel?jobId=${encodeURIComponent(jobId)}`, OkResponseSchema, {
+    method: 'POST'
+  });
+  return requireOk(data, "Impossible d'annuler le scan");
+}

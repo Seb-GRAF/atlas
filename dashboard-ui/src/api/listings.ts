@@ -2,7 +2,9 @@ import { apiRequest, withProfile } from './client';
 import {
   DashboardState,
   OkResponseSchema,
+  RunScanJobResponseSchema,
   RunScanResponseSchema,
+  ScanJobSchema,
   StateSchema,
   TogglePinResponseSchema
 } from './schemas';
@@ -16,10 +18,16 @@ export async function getDashboardState(profile?: string): Promise<DashboardStat
   return apiRequest(withProfile('/api/state', profile), StateSchema);
 }
 
-export async function updateListingStatus(profile: string, id: string | number, status: string, notes: string) {
+export async function updateListingStatus(
+  profile: string,
+  id: string | number,
+  status: string,
+  notes: string,
+  options: { reopen?: boolean } = {}
+) {
   const data = await apiRequest(withProfile('/api/update-status', profile), OkResponseSchema, {
     method: 'POST',
-    body: JSON.stringify({ id, status, notes })
+    body: JSON.stringify({ id, status, notes, ...(options.reopen ? { reopen: true } : {}) })
   });
   return requireOk(data, 'Impossible de mettre à jour le statut');
 }
@@ -46,4 +54,23 @@ export async function runProfileScan(profile?: string) {
   const data = await apiRequest(withProfile('/api/run-scan', profile), RunScanResponseSchema, { method: 'POST' });
   requireOk(data, 'Impossible de lancer le scan');
   return data.summary || '';
+}
+
+export async function startProfileScan(profile?: string) {
+  const data = await apiRequest(withProfile('/api/run-scan-job', profile), RunScanJobResponseSchema, { method: 'POST' });
+  requireOk(data, 'Impossible de lancer le scan');
+  if (!data.jobId) throw new Error('Réponse API invalide: jobId manquant');
+  return data;
+}
+
+export async function getProfileScanStatus(jobId: string) {
+  const data = await apiRequest(`/api/scan-status?jobId=${encodeURIComponent(jobId)}`, ScanJobSchema);
+  return requireOk(data, 'Impossible de lire le statut du scan');
+}
+
+export async function cancelProfileScan(jobId: string) {
+  const data = await apiRequest(`/api/scan-cancel?jobId=${encodeURIComponent(jobId)}`, OkResponseSchema, {
+    method: 'POST'
+  });
+  return requireOk(data, "Impossible d'annuler le scan");
 }

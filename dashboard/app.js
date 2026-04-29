@@ -43,17 +43,41 @@ function apiUrl(pathname) {
   return `${pathname}${sep}profile=${encodeURIComponent(PROFILE)}`;
 }
 
-const DONE_STATUSES = new Set(['Accepté', 'Refusé']);
+const DEFAULT_STATUSES = [
+  'À trier',
+  'À contacter',
+  'Contacté',
+  'Visite prévue',
+  'Dossier à envoyer',
+  'Dossier envoyé',
+  'Relance à faire',
+  'Accepté',
+  'Écartée',
+  'Refus régie'
+];
+const DONE_STATUSES = new Set(['Accepté', 'Écartée', 'Refus régie']);
 const REMOVED_KANBAN_STATUS = 'Retirées';
+
+function normalizeStatus(status = '') {
+  const s = String(status || '').trim();
+  if (!s || s === 'À trier') return 'À trier';
+  if (s === 'À contacter') return 'À contacter';
+  if (['Sauvegardé', 'Gardée'].includes(s)) return 'À contacter';
+  if (['Contacté', 'Contactée'].includes(s)) return 'Contacté';
+  if (['Visite', 'Visite demandée', 'Visite planifiée', 'Visité', 'Visite prévue'].includes(s)) return 'Visite prévue';
+  if (['Dossier', 'Dossier prêt à envoyer', 'Dossier à envoyer'].includes(s)) return 'Dossier à envoyer';
+  if (s === 'Dossier envoyé') return 'Dossier envoyé';
+  if (['Relance', 'Relance J+2', 'Sans réponse', 'Relance à faire'].includes(s)) return 'Relance à faire';
+  if (['Refusé', 'Écartée'].includes(s)) return 'Écartée';
+  if (s === 'Refus régie') return 'Refus régie';
+  if (s === 'Accepté') return 'Accepté';
+  return 'À trier';
+}
 
 let statuses = [];
 let allListings = [];
 let latestState = { newCount: 0 };
 let draggedKanbanId = null;
-let scorePopoverEl = null;
-let scorePopoverHideTimer = null;
-let activeScoreTrigger = null;
-let scorePopoverGlobalBound = false;
 
 function money(v) {
   if (v == null) return 'n/a';
@@ -70,40 +94,58 @@ function shortWhen(iso) {
   });
 }
 
+function dateMs(iso) {
+  if (!iso) return 0;
+  const ts = new Date(iso).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function formatAge(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(hours / 24)} j`;
+}
+
 function publishedMeta(item) {
   const publishedIso = item?.publishedAt;
   const firstSeenIso = item?.firstSeenAt;
 
-  const parseDays = (iso) => {
-    if (!iso) return null;
-    const ts = new Date(iso).getTime();
-    if (!Number.isFinite(ts)) return null;
-    return Math.max(0, Math.floor((Date.now() - ts) / 86400000));
+  const parseAge = (iso) => {
+    const ts = dateMs(iso);
+    if (!ts) return null;
+    const ageMs = Math.max(0, Date.now() - ts);
+    return {
+      ageMs,
+      days: Math.floor(ageMs / 86400000),
+      label: formatAge(ageMs)
+    };
   };
 
-  const publishedDays = parseDays(publishedIso);
-  if (publishedDays != null) {
-    return { days: publishedDays, approximate: false, iso: publishedIso };
+  const publishedAge = parseAge(publishedIso);
+  if (publishedAge) {
+    return { ...publishedAge, approximate: false, source: 'published', iso: publishedIso };
   }
 
-  const discoveredDays = parseDays(firstSeenIso);
-  if (discoveredDays != null) {
-    return { days: discoveredDays, approximate: true, iso: firstSeenIso };
+  const discoveredAge = parseAge(firstSeenIso);
+  if (discoveredAge) {
+    return { ...discoveredAge, approximate: true, source: 'firstSeen', iso: firstSeenIso };
   }
 
-  return { days: null, approximate: false, iso: null };
+  return { ageMs: null, days: null, label: null, approximate: false, source: 'none', iso: null };
 }
 
 function publishedLabel(item) {
   const meta = publishedMeta(item);
-  if (meta.days == null) return 'N/A';
-  return meta.approximate ? `${meta.days} j*` : `${meta.days} j`;
+  if (!meta.label) return 'Inconnue';
+  return meta.source === 'firstSeen' ? `Vu ${meta.label}` : meta.label;
 }
 
 function publishedTitle(item) {
   const meta = publishedMeta(item);
   if (meta.days == null) return 'Date de parution indisponible';
-  if (meta.approximate) return `Découverte le ${shortWhen(meta.iso)} (estimation)`;
+  if (meta.approximate) return `Date de parution indisponible - découverte le ${shortWhen(meta.iso)}`;
   return `Publié le ${shortWhen(meta.iso)}`;
 }
 
@@ -176,12 +218,18 @@ function getImageUrls(item) {
 function getUrgency(item) {
   if (item.isRemoved) return { level: 'done', label: 'Retirée' };
 
-  const status = item.status || 'À contacter';
+  const status = normalizeStatus(item.status);
   if (DONE_STATUSES.has(status)) return { level: 'done', label: 'Clos' };
-  if (status === 'Sans réponse' || status === 'Relance') return { level: 'high', label: 'Relance' };
+  if (status === 'Relance à faire') return { level: 'high', label: 'Relance' };
 
   const refIso = item.updatedAt || item.firstSeenAt || item.lastSeenAt;
   const ageHours = refIso ? (Date.now() - new Date(refIso).getTime()) / 3600000 : 0;
+
+  if (status === 'À trier') {
+    if (ageHours > 18) return { level: 'high', label: 'Trier' };
+    if (ageHours > 8) return { level: 'medium', label: 'Nouveau' };
+    return { level: 'low', label: 'OK' };
+  }
 
   if (status === 'À contacter') {
     if (ageHours > 18) return { level: 'high', label: 'Urgent' };
@@ -189,13 +237,13 @@ function getUrgency(item) {
     return { level: 'low', label: 'OK' };
   }
 
-  if (status === 'Visite') {
+  if (status === 'Visite prévue') {
     if (ageHours > 36) return { level: 'high', label: 'Relance' };
     if (ageHours > 18) return { level: 'medium', label: 'Suivi' };
     return { level: 'low', label: 'OK' };
   }
 
-  if (status === 'Dossier') {
+  if (status === 'Dossier à envoyer' || status === 'Dossier envoyé') {
     if (ageHours > 24) return { level: 'high', label: 'Urgent' };
     if (ageHours > 12) return { level: 'medium', label: 'Suivi' };
     return { level: 'low', label: 'OK' };
@@ -259,174 +307,12 @@ function escapeHtml(value = '') {
     .replace(/'/g, '&#39;');
 }
 
-function scoreLines(item) {
-  const hideDistanceReasons = (lines) => lines.filter((x) => !/^Trajet\b/i.test(String(x).trim()));
-  if (Array.isArray(item.scoreBreakdown) && item.scoreBreakdown.length) return hideDistanceReasons(item.scoreBreakdown);
-  if (!item.scoreTooltip) return [];
-
-  return String(item.scoreTooltip)
-    .split(/[|·]/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .filter((x) => !/^score\s*:/i.test(x))
-    .filter((x) => !/^Trajet\b/i.test(x));
-}
-
-function encodeScorePayload(item) {
-  const payload = {
-    score: item.score ?? 'n/a',
-    lines: scoreLines(item)
-  };
-  return encodeURIComponent(JSON.stringify(payload));
-}
-
-function decodeScorePayload(el) {
-  try {
-    return JSON.parse(decodeURIComponent(el?.dataset?.scorePayload || ''));
-  } catch {
-    return { score: 'n/a', lines: [] };
-  }
-}
-
-function scorePercent(item) {
-  const raw = Number(item.score ?? 0);
-  return Math.max(0, Math.min(100, raw));
-}
-
-function ensureScorePopover() {
-  if (!scorePopoverEl) {
-    scorePopoverEl = document.createElement('div');
-    scorePopoverEl.className = 'score-popover-floating';
-    scorePopoverEl.setAttribute('role', 'tooltip');
-    document.body.appendChild(scorePopoverEl);
-  }
-
-  if (!scorePopoverGlobalBound) {
-    document.addEventListener('click', (event) => {
-      if (!activeScoreTrigger || !scorePopoverEl?.classList.contains('visible')) return;
-      if (activeScoreTrigger.contains(event.target)) return;
-      hideScorePopover();
-    });
-
-    window.addEventListener('scroll', hideScorePopover, { passive: true });
-    window.addEventListener('resize', hideScorePopover);
-    scorePopoverGlobalBound = true;
-  }
-
-  return scorePopoverEl;
-}
-
-function placeScorePopover(trigger, pop) {
-  const rect = trigger.getBoundingClientRect();
-  const margin = 10;
-
-  const width = pop.offsetWidth || 260;
-  const height = pop.offsetHeight || 120;
-
-  let left = rect.left + rect.width / 2 - width / 2;
-  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
-
-  let top = rect.top - height - 8;
-  if (top < margin) top = rect.bottom + 8;
-
-  pop.style.left = `${Math.round(left)}px`;
-  pop.style.top = `${Math.round(top)}px`;
-}
-
-function showScorePopover(trigger) {
-  const pop = ensureScorePopover();
-  clearTimeout(scorePopoverHideTimer);
-
-  const payload = decodeScorePayload(trigger);
-  const lines = Array.isArray(payload.lines) ? payload.lines : [];
-  const listHtml = lines.length
-    ? `<ul class="score-pop-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`
-    : '<div class="score-pop-empty">Pas de détail disponible</div>';
-
-  pop.innerHTML = `<div class="score-pop-title">Score ${escapeHtml(payload.score)}</div>${listHtml}`;
-  pop.classList.add('visible');
-  activeScoreTrigger = trigger;
-  placeScorePopover(trigger, pop);
-}
-
-function hideScorePopover() {
-  if (!scorePopoverEl) return;
-  scorePopoverEl.classList.remove('visible');
-  activeScoreTrigger = null;
-}
-
-function scheduleHideScorePopover() {
-  clearTimeout(scorePopoverHideTimer);
-  scorePopoverHideTimer = setTimeout(() => {
-    hideScorePopover();
-  }, 80);
-}
-
-function bindScorePopovers() {
-  ensureScorePopover();
-
-  document.querySelectorAll('.score-trigger').forEach((el) => {
-    if (el.dataset.scorePopoverBound === '1') return;
-    el.dataset.scorePopoverBound = '1';
-
-    el.addEventListener('mouseenter', () => showScorePopover(el));
-    el.addEventListener('mouseleave', scheduleHideScorePopover);
-    el.addEventListener('focus', () => showScorePopover(el));
-    el.addEventListener('blur', hideScorePopover);
-
-    el.addEventListener('click', (event) => {
-      event.preventDefault();
-      if (activeScoreTrigger === el && scorePopoverEl?.classList.contains('visible')) {
-        hideScorePopover();
-      } else {
-        showScorePopover(el);
-      }
-    });
-
-    el.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        showScorePopover(el);
-      }
-      if (event.key === 'Escape') {
-        hideScorePopover();
-      }
-    });
-  });
-}
-
-function createScoreDisplay(item) {
-  const wrap = document.createElement('div');
-  wrap.className = 'score-wrap score-trigger';
-  wrap.dataset.scorePayload = encodeScorePayload(item);
-  wrap.tabIndex = 0;
-  wrap.setAttribute('role', 'button');
-  wrap.setAttribute('aria-label', `Détails du score ${item.score ?? 'n/a'}`);
-
-  const pill = document.createElement('span');
-  pill.className = 'score-pill';
-  pill.textContent = item.score ?? '-';
-
-  const track = document.createElement('span');
-  track.className = 'score-track';
-  const fill = document.createElement('span');
-  fill.className = 'score-fill';
-  fill.style.width = `${scorePercent(item)}%`;
-  track.appendChild(fill);
-
-  wrap.append(pill, track);
-  return wrap;
-}
-
-function scoreMiniHtml(item) {
-  return `<span class="score-mini score-trigger" data-score-payload="${encodeScorePayload(item).replace(/"/g, '&quot;')}" tabindex="0" role="button" aria-label="Détails du score ${item.score ?? 'n/a'}"><span class="score-pill">${item.score ?? '-'}</span><span class="score-track"><span class="score-fill" style="width:${scorePercent(item)}%"></span></span></span>`;
-}
-
 function listingDateMs(item) {
-  const iso = item.publishedAt || item.firstSeenAt || item.lastSeenAt || item.updatedAt;
-  if (!iso) return 0;
-  const ts = new Date(iso).getTime();
-  return Number.isFinite(ts) ? ts : 0;
+  return dateMs(item.publishedAt) || listingFallbackDateMs(item);
+}
+
+function listingFallbackDateMs(item) {
+  return dateMs(item.firstSeenAt) || dateMs(item.lastSeenAt) || dateMs(item.updatedAt);
 }
 
 function applyFilterAndSort(items) {
@@ -446,7 +332,9 @@ function applyFilterAndSort(items) {
     const bGrey = (b.isRemoved || isRefused(b)) ? 1 : 0;
     if (aGrey !== bGrey) return aGrey - bGrey;
 
-    return listingDateMs(b) - listingDateMs(a) || (b.score || 0) - (a.score || 0);
+    const aSortDate = listingDateMs(a);
+    const bSortDate = listingDateMs(b);
+    return bSortDate - aSortDate;
   });
 
   return out;
@@ -454,11 +342,11 @@ function applyFilterAndSort(items) {
 
 function createStatusSelect(item) {
   const select = document.createElement('select');
-  for (const st of statuses) {
+  for (const st of [...new Set(statuses.map(normalizeStatus))]) {
     const opt = document.createElement('option');
     opt.value = st;
     opt.textContent = st;
-    if (st === item.status) opt.selected = true;
+    if (st === normalizeStatus(item.status)) opt.selected = true;
     select.appendChild(opt);
   }
   return select;
@@ -515,7 +403,7 @@ function attachKanbanDropzone(body, targetStatus) {
     const item = allListings.find((x) => String(x.id) === String(droppedId));
     if (!item) return;
     if (item.isRemoved) return;
-    if ((item.status || 'À contacter') === targetStatus) return;
+    if (normalizeStatus(item.status) === targetStatus) return;
 
     const ok = await updateStatus(item.id, targetStatus, item.notes || '');
     if (ok) await load();
@@ -596,7 +484,8 @@ function createThumbCell(item) {
 }
 
 function isRefused(item) {
-  return !item.isRemoved && (item.status || '') === 'Refusé';
+  const status = normalizeStatus(item.status);
+  return !item.isRemoved && (status === 'Écartée' || status === 'Refus régie');
 }
 
 function createUrgencyBadge(item) {
@@ -613,7 +502,7 @@ function renderDesktop(listings) {
 
   if (!listings.length) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td colspan="8"><div class="empty">Aucune annonce ne correspond à la recherche.</div></td>`;
+    tr.innerHTML = `<td colspan="7"><div class="empty">Aucune annonce ne correspond à la recherche.</div></td>`;
     rowsEl.appendChild(tr);
     return;
   }
@@ -623,9 +512,6 @@ function renderDesktop(listings) {
     if (item.isRemoved) tr.classList.add('row-removed');
     if (isRefused(item)) tr.classList.add('row-refused');
     if (isNewToday(item) && !item.isRemoved) tr.classList.add('row-new');
-
-    const tdScore = document.createElement('td');
-    tdScore.appendChild(createScoreDisplay(item));
 
     const tdImage = document.createElement('td');
     tdImage.appendChild(createThumbCell(item));
@@ -690,7 +576,7 @@ function renderDesktop(listings) {
     tdAction.appendChild(actionCell);
 
     if (item.pinned) tr.classList.add('row-pinned');
-    tr.append(tdScore, tdImage, tdInfo, tdPrice, tdPublished, tdStatus, tdNotes, tdAction);
+    tr.append(tdImage, tdInfo, tdPrice, tdPublished, tdStatus, tdNotes, tdAction);
     rowsEl.appendChild(tr);
   }
 }
@@ -706,14 +592,15 @@ function renderKanban(listings) {
 
   const baseStatuses = (statuses.length
     ? statuses
-    : ['À contacter', 'Visite', 'Dossier', 'Relance', 'Accepté', 'Refusé', 'Sans réponse'])
-    .slice();
-  const orderedStatuses = [...baseStatuses, REMOVED_KANBAN_STATUS];
+    : DEFAULT_STATUSES)
+    .map(normalizeStatus);
+  const uniqueBaseStatuses = [...new Set(baseStatuses)];
+  const orderedStatuses = [...uniqueBaseStatuses, REMOVED_KANBAN_STATUS];
 
   for (const status of orderedStatuses) {
     const colItems = status === REMOVED_KANBAN_STATUS
       ? listings.filter((x) => x.isRemoved)
-      : listings.filter((x) => !x.isRemoved && (x.status || 'À contacter') === status);
+      : listings.filter((x) => !x.isRemoved && normalizeStatus(x.status) === status);
 
     const col = document.createElement('section');
     col.className = 'kanban-col';
@@ -769,7 +656,6 @@ function renderKanban(listings) {
         ${cover ? `<img class="k-cover" src="${cover}" alt="Aperçu ${item.objectType || item.title}" loading="lazy" />` : '<div class="k-cover"></div>'}
         <div class="k-body">
           <div class="k-meta-top">
-            ${scoreMiniHtml(item)}
             <span class="k-price">${money(item.totalChf)}</span>
           </div>
           <a href="${item.url}" target="_blank" rel="noreferrer" class="k-title">${item.objectType || item.title}</a>
@@ -878,7 +764,7 @@ function renderMobile(listings) {
     card.innerHTML = `
       ${cover ? `<img class="mobile-cover" src="${cover}" alt="Aperçu ${item.objectType || item.title}" loading="lazy" />` : '<div class="mobile-cover"></div>'}
       <div class="mobile-content">
-        <h3 class="mobile-title">${scoreMiniHtml(item)} <a href="${item.url}" target="_blank" rel="noreferrer">${item.objectType || item.title}</a></h3>
+        <h3 class="mobile-title"><a href="${item.url}" target="_blank" rel="noreferrer">${item.objectType || item.title}</a></h3>
         <div class="mobile-meta">
           <div>${item.address || ''}</div>
           <div>${item.area || '-'} · ${money(item.totalChf)}${sourceMetaHtml(item) ? ` · ${sourceMetaHtml(item)}` : ''}</div>
@@ -967,20 +853,18 @@ function renderMobile(listings) {
 }
 
 function renderAll(latest) {
-  hideScorePopover();
   const filtered = applyFilterAndSort(allListings);
   renderKanban(filtered);
   renderDesktop(filtered);
   renderMobile(filtered);
-  bindScorePopovers();
 }
 
 async function load() {
   const res = await fetch(apiUrl('/api/state'));
   const { tracker, latest, profile, areas } = await res.json();
 
-  statuses = tracker.statuses || [];
-  allListings = (tracker.listings || []).filter((x) => x.display !== false);
+  statuses = [...new Set((tracker.statuses || DEFAULT_STATUSES).map(normalizeStatus))];
+  allListings = (tracker.listings || []).filter((x) => x.display !== false).map((x) => ({ ...x, status: normalizeStatus(x.status) }));
   latestState = latest || { newCount: 0 };
 
   const activeCount = allListings.filter((x) => !x.isRemoved).length;

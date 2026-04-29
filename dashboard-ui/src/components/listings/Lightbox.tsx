@@ -1,118 +1,109 @@
-import { ActionIcon, Group, Image, Modal, Stack, Text, UnstyledButton } from '@mantine/core';
-import { IconChevronLeft, IconChevronRight, IconX } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import lightGallery from 'lightgallery';
+import type { LightGallery as LightGalleryInstance } from 'lightgallery/lightgallery';
+import type { GalleryItem } from 'lightgallery/lg-utils';
+import lgThumbnail from 'lightgallery/plugins/thumbnail';
+import lgZoom from 'lightgallery/plugins/zoom';
+import 'lightgallery/css/lightgallery.css';
+import 'lightgallery/css/lg-thumbnail.css';
+import 'lightgallery/css/lg-zoom.css';
 
 export type LightboxState = { urls: string[]; index: number } | null;
 
+const STRINGS = {
+  closeGallery: 'Fermer',
+  toggleMaximize: 'Agrandir',
+  previousSlide: 'Précédent',
+  nextSlide: 'Suivant',
+  download: 'Télécharger',
+  playVideo: 'Lire la vidéo',
+  mediaLoadingFailed: 'Impossible de charger ce média.'
+};
+
 export function Lightbox({ state, onClose }: { state: LightboxState; onClose: () => void }) {
-  const [index, setIndex] = useState(state?.index || 0);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const instanceRef = useRef<LightGalleryInstance | null>(null);
+  const suppressCloseRef = useRef(false);
+  const onCloseRef = useRef(onClose);
 
-  useEffect(() => {
-    setIndex(state?.index || 0);
-  }, [state]);
-
-  useEffect(() => {
-    if (!state) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowLeft') setIndex((current) => (current - 1 + state.urls.length) % state.urls.length);
-      if (event.key === 'ArrowRight') setIndex((current) => (current + 1) % state.urls.length);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [state]);
-
-  if (!state || !state.urls.length) return null;
-
-  const current = ((index % state.urls.length) + state.urls.length) % state.urls.length;
-
-  return (
-    <Modal
-      opened={!!state}
-      onClose={onClose}
-      size="100%"
-      padding="md"
-      withCloseButton={false}
-      fullScreen
-      overlayProps={{ backgroundOpacity: 0.92, color: '#000' }}
-    >
-      <Stack gap="sm" align="center" h="100%" justify="space-between">
-        <ActionIcon
-          variant="filled"
-          color="dark"
-          size="lg"
-          radius="xl"
-          aria-label="Fermer"
-          onClick={onClose}
-          style={{ position: 'absolute', top: 18, right: 18, zIndex: 10 }}
-        >
-          <IconX size={20} />
-        </ActionIcon>
-        {state.urls.length > 1 ? (
-          <>
-            <ActionIcon
-              variant="filled"
-              color="dark"
-              size="xl"
-              radius="xl"
-              aria-label="Précédent"
-              onClick={(event) => {
-                event.stopPropagation();
-                setIndex(current - 1);
-              }}
-              style={{ position: 'absolute', left: 18, top: '48%', zIndex: 10 }}
-            >
-              <IconChevronLeft size={24} />
-            </ActionIcon>
-            <ActionIcon
-              variant="filled"
-              color="dark"
-              size="xl"
-              radius="xl"
-              aria-label="Suivant"
-              onClick={(event) => {
-                event.stopPropagation();
-                setIndex(current + 1);
-              }}
-              style={{ position: 'absolute', right: 18, top: '48%', zIndex: 10 }}
-            >
-              <IconChevronRight size={24} />
-            </ActionIcon>
-          </>
-        ) : null}
-        <Image
-          src={state.urls[current]}
-          fit="contain"
-          mah="78vh"
-          maw="92vw"
-          alt="Photo annonce"
-        />
-        <Text c="white" size="sm">
-          {current + 1} / {state.urls.length}
-        </Text>
-        {state.urls.length > 1 ? (
-          <Group gap={6} wrap="nowrap" style={{ overflowX: 'auto', maxWidth: '92vw' }}>
-            {state.urls.map((url, itemIndex) => (
-              <UnstyledButton key={`${url}-${itemIndex}`} onClick={() => setIndex(itemIndex)}>
-                <Image
-                  src={url}
-                  alt={`Photo ${itemIndex + 1}`}
-                  w={58}
-                  h={42}
-                  fit="cover"
-                  radius="xs"
-                  style={{
-                    outline: itemIndex === current ? '2px solid var(--mantine-color-white)' : '2px solid transparent',
-                    outlineOffset: -2,
-                    transition: 'outline-color 140ms ease'
-                  }}
-                />
-              </UnstyledButton>
-            ))}
-          </Group>
-        ) : null}
-      </Stack>
-    </Modal>
+  const dynamicEl = useMemo<GalleryItem[]>(
+    () =>
+      (state?.urls || []).map((url, index) => ({
+        src: url,
+        thumb: url,
+        alt: `Photo annonce ${index + 1}`,
+        downloadUrl: false
+      })),
+    [state?.urls]
   );
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!state || !dynamicEl.length) return;
+    const { body, documentElement: html } = document;
+    const scrollY = window.scrollY;
+    const scrollbarWidth = window.innerWidth - html.clientWidth;
+    const previous = {
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyWidth: body.style.width,
+      bodyPaddingRight: body.style.paddingRight,
+      htmlOverflow: html.style.overflow
+    };
+    body.style.overflow = 'hidden';
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    if (scrollbarWidth > 0) body.style.paddingRight = `${scrollbarWidth}px`;
+    html.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = previous.bodyOverflow;
+      body.style.position = previous.bodyPosition;
+      body.style.top = previous.bodyTop;
+      body.style.width = previous.bodyWidth;
+      body.style.paddingRight = previous.bodyPaddingRight;
+      html.style.overflow = previous.htmlOverflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [state, dynamicEl]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!state || !dynamicEl.length || !host) return;
+
+    suppressCloseRef.current = false;
+    const instance = lightGallery(host, {
+      dynamic: true,
+      dynamicEl,
+      index: state.index,
+      plugins: [lgZoom, lgThumbnail],
+      licenseKey: '0000-0000-000-0000',
+      speed: 360,
+      download: false,
+      hideBarsDelay: 0,
+      mobileSettings: { controls: true, showCloseIcon: true, download: false },
+      strings: STRINGS
+    });
+
+    instanceRef.current = instance;
+    const handleClose = () => {
+      if (!suppressCloseRef.current) onCloseRef.current();
+    };
+
+    host.addEventListener('lgAfterClose', handleClose);
+    instance.openGallery(state.index);
+
+    return () => {
+      host.removeEventListener('lgAfterClose', handleClose);
+      suppressCloseRef.current = true;
+      instanceRef.current = null;
+      instance.destroy();
+    };
+  }, [dynamicEl, state]);
+
+  return <div ref={hostRef} hidden />;
 }

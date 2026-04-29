@@ -20,9 +20,7 @@ import { Area, ProfileDetail, ProfilePayload } from '../../api/schemas';
 import { createProfile, updateProfile } from '../../api/profiles';
 import { buildSlug } from '../../utils/format';
 import { GeoAutocomplete } from './GeoAutocomplete';
-import { PearlFields, RentFields, SourcesFields } from './ProfileFormSections';
-
-const DEFAULT_KEYWORDS = ['rénové', 'balcon', 'terrasse', 'vue', 'quartier paisible', 'lac', 'centre'];
+import { RentFields, SourcesFields } from './ProfileFormSections';
 
 export type ProfileFormValues = ProfilePayload;
 
@@ -44,18 +42,10 @@ function defaults(profile?: ProfileDetail | null): ProfileFormValues {
       minTotalChf: profile?.filters?.minTotalChf ?? 0,
       maxTotalChf: profile?.filters?.maxTotalChf ?? 1400,
       maxTotalHardChf: profile?.filters?.maxTotalHardChf ?? 1550,
-      maxPearlTotalChf: profile?.filters?.maxPearlTotalChf ?? 1650,
       minRoomsPreferred: profile?.filters?.minRoomsPreferred ?? 2,
       minSurfaceM2Preferred: profile?.filters?.minSurfaceM2Preferred ?? 0,
       maxPublishedAgeDays: profile?.filters?.maxPublishedAgeDays ?? 30,
-      allowMissingSurface: profile?.filters?.allowMissingSurface !== false,
-      pearl: {
-        enabled: profile?.filters?.pearl?.enabled !== false,
-        minRooms: profile?.filters?.pearl?.minRooms ?? 2,
-        minSurfaceM2: profile?.filters?.pearl?.minSurfaceM2 ?? 50,
-        keywords: profile?.filters?.pearl?.keywords || DEFAULT_KEYWORDS,
-        minHits: profile?.filters?.pearl?.minHits ?? 1
-      }
+      allowMissingSurface: profile?.filters?.allowMissingSurface !== false
     },
     preferences: {
       workplaceAddress: profile?.preferences?.workplaceAddress || null
@@ -113,7 +103,6 @@ export function ProfileForm({
   });
 
   const values = form.values;
-  const pearlEnabled = !!values.filters.pearl?.enabled;
   const content = (
     <form onSubmit={submit}>
       <Stack gap="md">
@@ -179,7 +168,6 @@ export function ProfileForm({
           onGeoSelect={(item) => form.setFieldValue('preferences.workplaceAddress', item.label)}
         />
 
-        <PearlFields form={form} enabled={pearlEnabled} />
         <SourcesFields form={form} />
 
         <Divider />

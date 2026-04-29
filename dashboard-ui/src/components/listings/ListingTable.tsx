@@ -12,9 +12,8 @@ import {
 } from '../../utils/listings';
 import { ImageThumbs } from './ImageThumbs';
 import { DeleteRemovedButton, NotesSave, PinButton, StatusSelect } from './ListingControls';
-import { ScoreBadge } from './ScoreBadge';
 import { ListingBadges, UrgencyBadge } from './ListingBadges';
-import { getRowStyle } from './rowStyle';
+import { getRowProps } from './rowStyle';
 
 export function ListingTable({
   profile,
@@ -29,10 +28,6 @@ export function ListingTable({
 }) {
   const columns = useMemo<ColumnDef<Listing>[]>(
     () => [
-      {
-        header: 'Score',
-        cell: ({ row }) => <ScoreBadge item={row.original} />
-      },
       {
         header: 'Image',
         cell: ({ row }) => <ImageThumbs item={row.original} onOpen={onOpenLightbox} />
@@ -75,7 +70,7 @@ export function ListingTable({
             meta.days == null
               ? 'Date de parution indisponible'
               : meta.approximate
-                ? `Découverte le ${shortWhen(meta.iso)} (estimation)`
+                ? `Date de parution indisponible - découverte le ${shortWhen(meta.iso)}`
                 : `Publié le ${shortWhen(meta.iso)}`;
           return <span title={title}>{publishedLabel(row.original)}</span>;
         }
@@ -136,7 +131,7 @@ export function ListingTable({
           {table.getRowModel().rows.map((row) => {
             const item = row.original;
             return (
-              <Table.Tr key={row.id} style={getRowStyle(item)}>
+              <Table.Tr key={row.id} {...getRowProps(item)}>
                 {row.getVisibleCells().map((cell) => (
                   <Table.Td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</Table.Td>
                 ))}

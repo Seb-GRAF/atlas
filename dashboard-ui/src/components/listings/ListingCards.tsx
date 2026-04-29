@@ -1,8 +1,7 @@
-import { Anchor, Card, Center, Group, Image, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Anchor, Card, Center, Group, Stack, Text } from '@mantine/core';
 import { Listing } from '../../api/schemas';
 import { money, shortWhen } from '../../utils/format';
 import {
-  getImageUrls,
   getUrgency,
   listingSourceLabel,
   listingTitle,
@@ -10,8 +9,8 @@ import {
 } from '../../utils/listings';
 import { DeleteRemovedButton, NotesSave, PinButton, StatusSelect } from './ListingControls';
 import { ListingBadges, UrgencyBadge } from './ListingBadges';
-import { ScoreBadge } from './ScoreBadge';
-import { getCardStyle } from './rowStyle';
+import { getCardProps } from './rowStyle';
+import { ListingImageGallery } from './ListingImageGallery';
 
 export function ListingCards({
   profile,
@@ -39,25 +38,11 @@ export function ListingCards({
   return (
     <Stack gap="sm" hiddenFrom="md">
       {listings.map((item) => {
-        const urls = getImageUrls(item);
-
         return (
-          <Card key={String(item.id)} style={getCardStyle(item)}>
+          <Card key={String(item.id)} {...getCardProps(item)}>
             <Stack gap="sm">
-              {urls[0] ? (
-                <UnstyledButton onClick={() => onOpenLightbox(urls, 0)}>
-                  <Image
-                    src={urls[0]}
-                    alt={`Aperçu ${listingTitle(item)}`}
-                    h={160}
-                    radius="sm"
-                    fit="cover"
-                    loading="lazy"
-                  />
-                </UnstyledButton>
-              ) : null}
+              <ListingImageGallery item={item} onOpen={onOpenLightbox} variant="card" showThumbnails={false} />
               <Group gap={6} align="center">
-                <ScoreBadge item={item} />
                 <Text fw={800} ml="auto">
                   {money(item.totalChf)}
                 </Text>
@@ -77,27 +62,7 @@ export function ListingCards({
                 </Text>
                 <ListingBadges item={item} />
               </div>
-              {urls.length > 1 ? (
-                <Group gap={4}>
-                  {urls.slice(1, 5).map((url, index) => (
-                    <UnstyledButton
-                      key={`${url}-${index}`}
-                      onClick={() => onOpenLightbox(urls, index + 1)}
-                    >
-                      <Image
-                        src={url}
-                        alt="miniature"
-                        w={24}
-                        h={20}
-                        radius="xs"
-                        fit="cover"
-                        bd="1px solid slate.2"
-                        loading="lazy"
-                      />
-                    </UnstyledButton>
-                  ))}
-                </Group>
-              ) : null}
+              <ListingImageGallery item={item} onOpen={onOpenLightbox} variant="card" showCover={false} />
               {item.isRemoved ? (
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">

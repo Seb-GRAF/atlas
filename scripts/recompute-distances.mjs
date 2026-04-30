@@ -7,6 +7,7 @@ import {
   buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
+  formatTransitLocation,
   formatMinutesText,
   getCachedRoute,
   normalizeTransitConnection,
@@ -145,13 +146,15 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
   }
 }
 
-async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
+async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords = null, listingCoords = null) {
   if (!workAddress || !listingAddress) {
     return { minutes: null, route: null, status: 'missing-address' };
   }
 
   const transitRef = resolveTransitReference();
   const key = buildTransitCacheKey(listingAddress, workAddress);
+  const from = formatTransitLocation(listingCoords, listingAddress);
+  const to = formatTransitLocation(workCoords, workAddress);
   const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
   if (cached.fresh && cached.minutes != null) {
     return { minutes: cached.minutes, route: cached.route, status: 'ok' };
@@ -160,8 +163,8 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
   try {
     const url = new URL('https://transport.opendata.ch/v1/connections');
     url.searchParams.set('limit', '1');
-    url.searchParams.set('from', listingAddress);
-    url.searchParams.set('to', workAddress);
+    url.searchParams.set('from', from);
+    url.searchParams.set('to', to);
     url.searchParams.set('date', transitRef.date);
     url.searchParams.set('time', transitRef.arrivalTime);
     url.searchParams.set('isArrivalTime', '1');
@@ -243,7 +246,7 @@ async function main() {
     
     const distanceKm = haversineKm(workCoords.lat, workCoords.lon, listingCoords.lat, listingCoords.lon);
     const drive = await fetchDrivingMinutes(workCoords, listingCoords, routeCache);
-    const transit = await fetchTransitRoute(workAddress, listingAddress, routeCache);
+    const transit = await fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords, listingCoords);
 
     setCommuteSuccessFields(listing, {
       workAddress,

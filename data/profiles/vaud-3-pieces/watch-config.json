@@ -104,34 +104,19 @@
     "minTotalChf": 1500,
     "maxTotalChf": 2200,
     "maxTotalHardChf": 2300,
-    "maxPearlTotalChf": 2300,
     "minRoomsPreferred": 3,
     "minSurfaceM2Preferred": 0,
     "allowMissingSurface": true,
-    "pearl": {
-      "enabled": true,
-      "minRooms": 3,
-      "minSurfaceM2": 50,
-      "keywords": [
-        "renove",
-        "renovee",
-        "rénové",
-        "rénovée",
-        "balcon",
-        "terrasse",
-        "calme"
-      ],
-      "minHits": 1
-    },
     "excludedObjectTypeKeywords": [
       "chambre",
       "colocation",
       "wg"
     ],
     "missingScansBeforeRemoved": 2,
-    "maxPublishedAgeDays": 30
+    "maxPublishedAgeDays": 30,
+    "maxRoomsPreferred": 3.5
   },
   "preferences": {
-    "workplaceAddress": null
+    "workplaceAddress": "Hospital CHUV Centre Sylvana (VD) - Epalinges"
   }
 }

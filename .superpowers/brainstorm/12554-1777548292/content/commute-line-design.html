@@ -1,0 +1,87 @@
+<h2>Commute visualization direction</h2>
+<p class="subtitle">
+  This version keeps option C, but fits Atlas: no emoji labels, compact list chips, and a richer route line in detail.
+</p>
+
+<div class="mockup">
+  <div class="mockup-header">List row preview</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:92px 1fr;gap:12px;align-items:stretch;padding:8px;border-radius:14px;background:#fff;box-shadow:0 0 0 1px rgba(22,20,15,.06)">
+      <div style="aspect-ratio:1;background:#d8d1c5;border-radius:10px"></div>
+      <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#766f64">Vevey · flatfox.ch</div>
+        <div style="font-weight:600;color:#191610">3 pièces à Vevey</div>
+        <div style="font-size:12px;color:#766f64">3 pces · 72 m²</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
+          <span style="display:inline-flex;gap:5px;align-items:center;padding:4px 7px;border-radius:8px;background:#f3efe7;color:#191610;font-family:monospace;font-size:12px">PT 42 min</span>
+          <span style="display:inline-flex;gap:5px;align-items:center;padding:4px 7px;border-radius:8px;background:#f3efe7;color:#191610;font-family:monospace;font-size:12px">CAR 31 min</span>
+          <span style="font-size:11px;color:#958d80">08:00 arrival</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Detail route line preview</div>
+  <div class="mockup-body">
+    <div style="display:flex;flex-direction:column;gap:12px;background:#fff;padding:14px;border-radius:12px;box-shadow:0 0 0 1px rgba(22,20,15,.06)">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">
+        <div>
+          <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#766f64">Public transport</div>
+          <div style="font-family:monospace;font-size:18px;color:#191610;margin-top:3px">42 min</div>
+        </div>
+        <div style="font-size:12px;color:#766f64">Arrive by 08:00 · next Monday</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center">
+        <div style="height:34px;border-radius:9px;background:#eee8dc;display:grid;place-items:center;font-size:10px;font-weight:700;color:#575044">WALK</div>
+        <div>
+          <div style="height:4px;background:#b8afa1;border-radius:999px"></div>
+          <div style="font-size:12px;color:#766f64;margin-top:5px">Rue de la Gare → Vevey</div>
+        </div>
+        <div style="font-family:monospace;font-size:12px">5 min</div>
+
+        <div style="height:34px;border-radius:9px;background:#e9ece2;display:grid;place-items:center;font-size:10px;font-weight:700;color:#344336">RE33</div>
+        <div>
+          <div style="height:4px;background:#5d7a61;border-radius:999px"></div>
+          <div style="font-size:12px;color:#766f64;margin-top:5px">Vevey → Lausanne</div>
+        </div>
+        <div style="font-family:monospace;font-size:12px">15 min</div>
+
+        <div style="height:34px;border-radius:9px;background:#eee8dc;display:grid;place-items:center;font-size:10px;font-weight:700;color:#575044">WALK</div>
+        <div>
+          <div style="height:4px;background:#b8afa1;border-radius:999px"></div>
+          <div style="font-size:12px;color:#766f64;margin-top:5px">Lausanne → Lausanne, gare</div>
+        </div>
+        <div style="font-family:monospace;font-size:12px">5 min</div>
+
+        <div style="height:34px;border-radius:9px;background:#e7eef1;display:grid;place-items:center;font-size:10px;font-weight:700;color:#2f4650">M2</div>
+        <div>
+          <div style="height:4px;background:#4f7f90;border-radius:999px"></div>
+          <div style="font-size:12px;color:#766f64;margin-top:5px">Lausanne, gare → Bessières</div>
+        </div>
+        <div style="font-family:monospace;font-size:12px">4 min</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>Achievable with free APIs</h4>
+    <ul>
+      <li>Uses connection sections returned by transport.opendata.ch.</li>
+      <li>No account or API key for basic use.</li>
+      <li>Works with apartment addresses, not only stations.</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>Constraints</h4>
+    <ul>
+      <li>API is unofficial and rate-limited by the upstream timetable provider.</li>
+      <li>Transit sections are timetable legs, not exact map polylines.</li>
+      <li>Failures should be visible, not silently hidden.</li>
+    </ul>
+  </div>
+</div>

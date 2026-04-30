@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   AtlasMap,
   GlassPanel,
@@ -7,6 +7,7 @@ import {
   MapControls,
   Mono,
   formatCHF,
+  type AtlasMapHandle,
   type AtlasMapPin
 } from '../../components';
 import type {
@@ -26,7 +27,7 @@ type MobileMapProps = {
   stage: AtlasStageValue;
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
-  onOpenList: () => void;
+  onOpenFilters: () => void;
 };
 
 const rootStyle: CSSProperties = {
@@ -70,8 +71,20 @@ export function MobileMap({
   stage,
   onStageChange,
   onSelect,
-  onOpenList
+  onOpenFilters
 }: MobileMapProps) {
+  const mapHandle = useRef<AtlasMapHandle>(null);
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // The carousel-driven focus is local: swiping highlights a pin and pans the
+  // map without opening the detail sheet. Tapping a card or pin still calls
+  // `onSelect` which lifts to the URL and opens detail.
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  // Suppress the IntersectionObserver while we're programmatically scrolling
+  // the carousel (e.g. pin tap → scroll mini-card into view) so it doesn't
+  // bounce focus back to whatever passes the centerline mid-animation.
+  const suppressObserverRef = useRef(false);
+
   const visible = useMemo(
     () => listings.filter((l) => l.lat != null && l.lon != null && l.totalChf != null),
     [listings]
@@ -83,7 +96,8 @@ export function MobileMap({
         id: l.id,
         lat: l.lat as number,
         lon: l.lon as number,
-        totalChf: l.totalChf as number
+        totalChf: l.totalChf as number,
+        precision: l.locationPrecision
       })),
     [visible]
   );
@@ -92,13 +106,100 @@ export function MobileMap({
     ? { lat: profile.workplaceCoords.lat, lon: profile.workplaceCoords.lon, zoom: 11 }
     : VEVEY_FALLBACK;
 
+  const carouselListings = useMemo(() => visible.slice(0, 12), [visible]);
+
+  // Mirror URL selection into local focus so the carousel scrolls to the right
+  // card on back/forward and on detail-sheet open. We deliberately don't
+  // auto-focus the first listing on mount — that would trump the initial
+  // fitBounds in AtlasMap and zoom into a single pin.
+  useEffect(() => {
+    if (selectedId) setFocusedId(selectedId);
+  }, [selectedId]);
+
+  // Drop a stale focus if the underlying listing leaves the carousel (e.g.
+  // stage filter change).
+  useEffect(() => {
+    setFocusedId((current) => {
+      if (!current) return null;
+      return carouselListings.some((l) => l.id === current) ? current : null;
+    });
+  }, [carouselListings]);
+
+  // Carousel → map: only commit a new focus once scrolling has settled. We
+  // wait for the native `scrollend` event when available, falling back to a
+  // 140ms debounce after the last scroll tick. Reacting mid-inertia would
+  // otherwise pan the map repeatedly through every card the swipe passes.
+  useEffect(() => {
+    const root = carouselRef.current;
+    if (!root || carouselListings.length === 0) return;
+
+    const computeNearest = (): string | null => {
+      const rootRect = root.getBoundingClientRect();
+      // Match the card snap alignment (start), padded by `scrollPaddingLeft`.
+      // Anchor on the card's left edge instead of its center so the picked
+      // card matches the snap point, not the visually-centered one.
+      const anchor = rootRect.left + 12;
+      let bestId: string | null = null;
+      let bestDist = Infinity;
+      for (const [id, el] of cardRefs.current) {
+        const r = el.getBoundingClientRect();
+        const dist = Math.abs(r.left - anchor);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestId = id;
+        }
+      }
+      return bestId;
+    };
+
+    const commit = () => {
+      if (suppressObserverRef.current) return;
+      const id = computeNearest();
+      if (id) setFocusedId(id);
+    };
+
+    const supportsScrollEnd = 'onscrollend' in root;
+    let timer = 0;
+    const onScroll = () => {
+      if (supportsScrollEnd) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(commit, 140);
+    };
+    const onScrollEnd = () => commit();
+
+    root.addEventListener('scroll', onScroll, { passive: true });
+    if (supportsScrollEnd) {
+      root.addEventListener('scrollend', onScrollEnd);
+    }
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      if (supportsScrollEnd) root.removeEventListener('scrollend', onScrollEnd);
+      window.clearTimeout(timer);
+    };
+  }, [carouselListings]);
+
+  // Map → carousel: when focus moves (e.g. user taps a pin and `selectedId`
+  // updates, or external state change), scroll the matching card into view.
+  useEffect(() => {
+    if (!focusedId) return;
+    const card = cardRefs.current.get(focusedId);
+    if (!card) return;
+    suppressObserverRef.current = true;
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+    const t = window.setTimeout(() => {
+      suppressObserverRef.current = false;
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [focusedId]);
+
   const selected =
-    listings.find((l) => l.id === selectedId) ?? visible[0] ?? null;
+    listings.find((l) => l.id === (selectedId ?? focusedId)) ?? visible[0] ?? null;
 
   return (
     <div style={rootStyle}>
       <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
         <AtlasMap
+          ref={mapHandle}
           pins={pins}
           selectedId={selected?.id ?? null}
           onSelect={(id) => id && onSelect(id)}
@@ -117,7 +218,7 @@ export function MobileMap({
             Vevey, Lutry…
           </span>
         </GlassPill>
-        <GlassPill as="button" padding="8px 10px" aria-label="Filtres">
+        <GlassPill as="button" padding="8px 10px" aria-label="Filtres" onClick={onOpenFilters}>
           <Icons.Filter size={15} stroke={1.7} />
           {profile.newCount > 0 ? (
             <span
@@ -153,7 +254,7 @@ export function MobileMap({
                 backdropFilter: 'var(--atlas-glass-pill-blur)',
                 WebkitBackdropFilter: 'var(--atlas-glass-pill-blur)',
                 color: active ? '#fff' : 'var(--atlas-ink-2)',
-                boxShadow: 'var(--atlas-shadow-1)',
+                // boxShadow: 'var(--atlas-shadow-1)',
                 border: 0,
                 cursor: 'pointer'
               }}
@@ -172,59 +273,47 @@ export function MobileMap({
           top: 116,
           zIndex: 5
         }}
+        onZoomIn={() => mapHandle.current?.zoomIn()}
+        onZoomOut={() => mapHandle.current?.zoomOut()}
+        onCompass={() => mapHandle.current?.resetBearing()}
+        onLayers={() => mapHandle.current?.flyToWorkplace()}
       />
 
-      {visible.length > 0 ? (
+      {carouselListings.length > 0 ? (
         <div
+          ref={carouselRef}
+          className="atlas-no-scrollbar"
           style={{
             position: 'absolute',
-            left: 12,
-            right: 12,
+            left: 0,
+            right: 0,
             bottom: `calc(env(safe-area-inset-bottom, 16px) + 88px)`,
             zIndex: 6,
             display: 'flex',
             gap: 10,
             overflowX: 'auto',
             scrollSnapType: 'x mandatory',
-            paddingBottom: 4
+            scrollPaddingLeft: 12,
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingBottom: 4,
+            WebkitOverflowScrolling: 'touch'
           }}
         >
-          {visible.slice(0, 12).map((listing) => (
+          {carouselListings.map((listing) => (
             <MiniCard
               key={listing.id}
               listing={listing}
-              selected={listing.id === selected?.id}
+              selected={listing.id === (selectedId ?? focusedId)}
+              registerRef={(el) => {
+                if (el) cardRefs.current.set(listing.id, el);
+                else cardRefs.current.delete(listing.id);
+              }}
               onSelect={onSelect}
             />
           ))}
         </div>
       ) : null}
-
-      <button
-        type="button"
-        onClick={onOpenList}
-        style={{
-          position: 'absolute',
-          left: 16,
-          bottom: `calc(env(safe-area-inset-bottom, 16px) + 80px)`,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '10px 18px',
-          borderRadius: 999,
-          background: 'var(--atlas-ink)',
-          color: '#fff',
-          fontSize: 13.5,
-          fontWeight: 500,
-          boxShadow: '0 14px 30px -10px rgba(22,20,15,.4)',
-          zIndex: 5,
-          border: 0,
-          cursor: 'pointer',
-          fontFamily: 'var(--atlas-sans)'
-        }}
-      >
-        <Icons.List size={16} stroke={1.8} /> Liste
-      </button>
     </div>
   );
 }
@@ -233,9 +322,10 @@ type MiniCardProps = {
   listing: AtlasListing;
   selected: boolean;
   onSelect: (id: string) => void;
+  registerRef: (el: HTMLDivElement | null) => void;
 };
 
-function MiniCard({ listing, selected, onSelect }: MiniCardProps) {
+function MiniCard({ listing, selected, onSelect, registerRef }: MiniCardProps) {
   const cover = listing.images[0];
   const meta = [
     listing.rooms != null ? `${listing.rooms} pces` : null,
@@ -246,11 +336,14 @@ function MiniCard({ listing, selected, onSelect }: MiniCardProps) {
     .join(' · ');
 
   return (
+    <div
+      ref={registerRef}
+      data-listing-id={listing.id}
+      style={{ flex: '0 0 280px', scrollSnapAlign: 'start' }}
+    >
     <GlassPanel
       variant="panel"
       style={{
-        flex: '0 0 280px',
-        scrollSnapAlign: 'start',
         borderRadius: 18,
         padding: 10,
         cursor: 'pointer',
@@ -344,5 +437,6 @@ function MiniCard({ listing, selected, onSelect }: MiniCardProps) {
         </div>
       </div>
     </GlassPanel>
+    </div>
   );
 }

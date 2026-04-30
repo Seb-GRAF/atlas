@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { GlassPanel, Icons } from '../../components';
 
-export type MobileTab = 'list' | 'map' | 'filters';
+export type MobileTab = 'list' | 'map';
 
 type MobileTabBarProps = {
   active: MobileTab;
@@ -24,7 +24,7 @@ const wrapperStyle: CSSProperties = {
   borderRadius: 999,
   padding: 4,
   display: 'grid',
-  gridTemplateColumns: '1fr 1fr 1fr'
+  gridTemplateColumns: '1fr 1fr'
 };
 
 const tabBaseStyle: CSSProperties = {
@@ -48,15 +48,14 @@ export function MobileTabBar({ active, onSelect, counts }: MobileTabBarProps) {
 
   const tabs: TabDef[] = [
     { key: 'list', label: 'Liste', icon: <Icons.List size={15} stroke={1.7} /> },
-    { key: 'map', label: 'Carte', icon: <Icons.Map size={15} stroke={1.7} /> },
-    { key: 'filters', label: 'Filtres', icon: <Icons.Filter size={15} stroke={1.7} /> }
+    { key: 'map', label: 'Carte', icon: <Icons.Map size={15} stroke={1.7} /> }
   ];
 
   return (
     <GlassPanel variant="panel" style={wrapperStyle}>
       {tabs.map((tab) => {
         const isActive = tab.key === active;
-        const showDot = tab.key === 'list' && newCount > 0 && !isActive;
+        const showDot = tab.key === 'list' && newCount > 0;
         return (
           <button
             key={tab.key}
@@ -69,35 +68,27 @@ export function MobileTabBar({ active, onSelect, counts }: MobileTabBarProps) {
               color: isActive ? '#fff' : 'var(--atlas-ink-2)'
             }}
           >
-            {tab.icon}
+            <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+              {tab.icon}
+              {showDot ? (
+                <span
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    top: -2,
+                    right: -4,
+                    width: 6,
+                    height: 6,
+                    borderRadius: 999,
+                    background: 'var(--atlas-ember)',
+                    boxShadow: isActive
+                      ? '0 0 0 1.5px var(--atlas-ink)'
+                      : '0 0 0 1.5px var(--atlas-paper)'
+                  }}
+                />
+              ) : null}
+            </span>
             {tab.label}
-            {isActive ? (
-              <span
-                style={{
-                  position: 'absolute',
-                  bottom: 2,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  width: 4,
-                  height: 4,
-                  borderRadius: 999,
-                  background: 'var(--atlas-ember)'
-                }}
-              />
-            ) : null}
-            {showDot ? (
-              <span
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: 10,
-                  width: 6,
-                  height: 6,
-                  borderRadius: 999,
-                  background: 'var(--atlas-ember)'
-                }}
-              />
-            ) : null}
           </button>
         );
       })}

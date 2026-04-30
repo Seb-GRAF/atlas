@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AtlasMap, type AtlasMapPin, MapControls } from '../components';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AtlasMap, type AtlasMapHandle, type AtlasMapPin, MapControls } from '../components';
 import { useAtlasMutations, useAtlasState } from '../data/hooks';
-import { listStages, matchesStage } from '../data/adapt';
+import { listStages, matchesStage, sortListings } from '../data/adapt';
 import { useAtlasUrlState } from '../url';
 import { useScan } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
 import { TopBar } from './TopBar';
 import { ListPanel } from './ListPanel';
-import { DetailPanel } from './DetailPanel';
+import { DetailPanel, PANEL_ANIM_MS } from './DetailPanel';
 import { EmptyListPanel } from './EmptyListPanel';
 import { ScanProgressCard } from './ScanProgressCard';
 import { SettingsDrawer, SettingsScrim } from './SettingsDrawer';
@@ -72,15 +72,13 @@ function DesktopShell() {
   const [urlState, updateUrl] = useAtlasUrlState();
   const { scan, start: startScan, cancel: cancelScan } = useScan();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const mapHandle = useRef<AtlasMapHandle>(null);
 
   const stages = useMemo(() => listStages(listings), [listings]);
 
   const filtered = useMemo(
-    () =>
-      listings
-        .filter((l) => matchesStage(l, urlState.stage))
-        .sort((a, b) => Number(b.pinned) - Number(a.pinned)),
-    [listings, urlState.stage]
+    () => sortListings(listings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
+    [listings, urlState.stage, urlState.sort]
   );
 
   const selected: AtlasListing | null = useMemo(
@@ -88,11 +86,37 @@ function DesktopShell() {
     [listings, urlState.listing]
   );
 
+  // Keep the detail panel mounted long enough to play its exit animation.
+  const detailVisible = !!selected && !settingsOpen;
+  const [detailRender, setDetailRender] = useState<AtlasListing | null>(detailVisible ? selected : null);
+  const [detailClosing, setDetailClosing] = useState(false);
+  useEffect(() => {
+    if (detailVisible && selected) {
+      setDetailRender(selected);
+      setDetailClosing(false);
+      return;
+    }
+    if (detailRender) {
+      setDetailClosing(true);
+      const id = window.setTimeout(() => {
+        setDetailRender(null);
+        setDetailClosing(false);
+      }, PANEL_ANIM_MS);
+      return () => window.clearTimeout(id);
+    }
+  }, [detailVisible, selected, detailRender]);
+
   const pins = useMemo<AtlasMapPin[]>(
     () =>
       filtered
         .filter((l) => l.lat != null && l.lon != null && l.totalChf != null)
-        .map((l) => ({ id: l.id, lat: l.lat as number, lon: l.lon as number, totalChf: l.totalChf as number })),
+        .map((l) => ({
+          id: l.id,
+          lat: l.lat as number,
+          lon: l.lon as number,
+          totalChf: l.totalChf as number,
+          precision: l.locationPrecision
+        })),
     [filtered]
   );
 
@@ -160,6 +184,7 @@ function DesktopShell() {
     >
       <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
         <AtlasMap
+          ref={mapHandle}
           pins={pins}
           selectedId={urlState.listing}
           onSelect={(id) => updateUrl({ listing: id })}
@@ -206,18 +231,21 @@ function DesktopShell() {
             <StageEmpty stage={urlState.stage} />
           ) : null
         }
+        sort={urlState.sort}
+        onSortChange={(sort) => updateUrl({ sort })}
       />
 
       {scanRunning ? <ScanCardConnector profile={profile} scan={scan} onCancel={() => cancelScan()} /> : null}
 
-      {selected && !settingsOpen ? (
+      {detailRender ? (
         <DetailPanel
-          listing={selected}
+          listing={detailRender}
+          closing={detailClosing}
           onTogglePin={(id) => togglePin.mutate(id)}
           onStatusChange={(id, status: AtlasListingStatus) =>
-            setStatus.mutate({ id, status, notes: selected.notes })
+            setStatus.mutate({ id, status, notes: detailRender.notes })
           }
-          onNotesChange={(id, notes) => setStatus.mutate({ id, status: selected.status, notes })}
+          onNotesChange={(id, notes) => setStatus.mutate({ id, status: detailRender.status, notes })}
           onDismiss={(id) => {
             dismiss.mutate(id);
             updateUrl({ listing: null });
@@ -226,7 +254,17 @@ function DesktopShell() {
       ) : null}
 
       <MapControls
-        style={{ position: 'absolute', right: 432, bottom: 24, zIndex: 4 }}
+        style={{
+          position: 'absolute',
+          right: detailVisible ? 432 : 24,
+          bottom: 24,
+          zIndex: 4,
+          transition: `right ${PANEL_ANIM_MS}ms cubic-bezier(0.32,0.72,0,1)`
+        }}
+        onZoomIn={() => mapHandle.current?.zoomIn()}
+        onZoomOut={() => mapHandle.current?.zoomOut()}
+        onCompass={() => mapHandle.current?.resetBearing()}
+        onLayers={() => mapHandle.current?.flyToWorkplace()}
       />
 
       {settingsOpen ? (

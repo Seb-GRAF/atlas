@@ -11,7 +11,8 @@ import {
   PhotoFrame,
   SourceMono,
   StatusPill,
-  formatCHF
+  formatCHF,
+  useLightbox
 } from '../components';
 import { StatGrid } from './StatGrid';
 import { CommuteTimeline } from './CommuteTimeline';
@@ -20,13 +21,16 @@ import { useState, useEffect } from 'react';
 
 type DetailPanelProps = {
   listing: AtlasListing | null;
+  closing?: boolean;
   onTogglePin: (id: string) => void;
   onStatusChange: (id: string, next: AtlasListingStatus) => void;
   onNotesChange: (id: string, next: string) => void;
   onDismiss: (id: string) => void;
 };
 
-const panelStyle: CSSProperties = {
+export const PANEL_ANIM_MS = 260;
+
+const basePanelStyle: CSSProperties = {
   position: 'absolute',
   right: 16,
   top: 76,
@@ -36,7 +40,7 @@ const panelStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  animation: 'atlas-detail-in 180ms ease-out'
+  willChange: 'transform, opacity'
 };
 
 const eyebrowStyle: CSSProperties = {
@@ -57,12 +61,14 @@ const STATUS_OPTIONS: { value: AtlasListingStatus; label: string }[] = [
 
 export function DetailPanel({
   listing,
+  closing,
   onTogglePin,
   onStatusChange,
   onNotesChange,
   onDismiss
 }: DetailPanelProps) {
   const [draftNotes, setDraftNotes] = useState(listing?.notes ?? '');
+  const openLightbox = useLightbox();
   useEffect(() => {
     setDraftNotes(listing?.notes ?? '');
   }, [listing?.id, listing?.notes]);
@@ -72,6 +78,13 @@ export function DetailPanel({
   const statusValue: AtlasListingStatus = STATUS_OPTIONS.find((s) => s.value === listing.status)
     ? listing.status
     : 'À trier';
+
+  const panelStyle: CSSProperties = {
+    ...basePanelStyle,
+    animation: closing
+      ? `atlas-detail-out ${PANEL_ANIM_MS}ms cubic-bezier(0.32,0.72,0,1) forwards`
+      : `atlas-detail-in ${PANEL_ANIM_MS}ms cubic-bezier(0.32,0.72,0,1)`
+  };
 
   return (
     <GlassPanel variant="panel" style={panelStyle}>
@@ -86,7 +99,12 @@ export function DetailPanel({
         }}
       >
         <div style={{ position: 'relative' }}>
-          <PhotoFrame images={listing.images} aspect="4 / 3" radius={14} />
+          <PhotoFrame
+            images={listing.images}
+            aspect="4 / 3"
+            radius={14}
+            onOpen={(images, index) => openLightbox(images, index)}
+          />
           <button
             type="button"
             onClick={() => onTogglePin(listing.id)}

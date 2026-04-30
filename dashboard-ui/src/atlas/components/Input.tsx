@@ -11,6 +11,8 @@ const baseFieldStyle: CSSProperties = {
   outline: 'none',
   border: 0,
   width: '100%',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
   transition: 'box-shadow 120ms ease'
 };
 
@@ -46,10 +48,12 @@ export function AtlasTextarea({ style, onFocus, onBlur, ...rest }: TextareaProps
   const [focused, setFocused] = useState(false);
   return (
     <textarea
+      cols={1}
       style={{
         ...baseFieldStyle,
         resize: 'none',
         minHeight: 70,
+        display: 'block',
         boxShadow: focused ? focusShadow : baseFieldStyle.boxShadow,
         ...style
       }}

@@ -176,7 +176,7 @@ workplaceEl.addEventListener('keydown', (e) => {
 function renderZones() {
   zonesListEl.innerHTML = '';
   if (!zones.length) {
-    zonesListEl.innerHTML = '<span style="color:var(--muted);font-size:0.82rem">Aucune zone ajoutée — recherchez une commune ci-dessous</span>';
+    zonesListEl.innerHTML = '<span style="color:var(--atlas-ink-3);font-size:12.5px">Aucune zone ajoutée — recherchez une commune ci-dessous</span>';
     return;
   }
   for (const z of zones) {
@@ -398,7 +398,7 @@ async function loadProfiles() {
     const { profiles } = await res.json();
     renderProfiles(profiles || []);
   } catch {
-    gridEl.innerHTML = '<p style="color:var(--danger)">Impossible de charger les profils.</p>';
+    gridEl.innerHTML = '<p style="color:var(--atlas-bad)">Impossible de charger les profils.</p>';
   }
 }
 

@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import type { CSSProperties, KeyboardEvent } from 'react';
 import { Icons, Mono, PhotoFrame, formatCHF } from '../../components';
 import type { AtlasListing } from '../../types';
 import { CommuteChips } from '../CommuteChips';
@@ -13,9 +13,6 @@ const rowStyle: CSSProperties = {
   flexDirection: 'column',
   gap: 8,
   padding: '12px 0',
-  borderTop: 0,
-  borderRight: 0,
-  borderLeft: 0,
   borderBottom: '1px solid var(--atlas-line-2)',
   background: 'transparent',
   textAlign: 'left',
@@ -80,8 +77,22 @@ const metaItem: CSSProperties = {
 
 export function MobileListRow({ listing, onSelect }: MobileListRowProps) {
   const sourceShort = String(listing.source).replace(/\.ch$/i, '');
+  const open = () => onSelect(listing.id);
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      open();
+    }
+  };
   return (
-    <button type="button" onClick={() => onSelect(listing.id)} style={rowStyle}>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={listing.title}
+      onClick={open}
+      onKeyDown={onKeyDown}
+      style={rowStyle}
+    >
       <div style={{ position: 'relative', width: '100%' }}>
         <PhotoFrame images={listing.images} aspect="16 / 10" radius={14} count={false} />
         <span
@@ -141,6 +152,6 @@ export function MobileListRow({ listing, onSelect }: MobileListRowProps) {
       </div>
 
       <CommuteChips listing={listing} compact style={{ marginTop: 6 }} />
-    </button>
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useAtlasMutations, useAtlasState } from '../../data/hooks';
-import { listStages, matchesStage } from '../../data/adapt';
+import { listStages, matchesStage, sortListings } from '../../data/adapt';
 import { useAtlasUrlState } from '../../url';
 import { useScan } from '../../scan';
 import type { AtlasListing, AtlasListingStatus } from '../../types';
@@ -8,6 +8,7 @@ import { MobileList } from './MobileList';
 import { MobileMap } from './MobileMap';
 import { MobileDetailSheet } from './MobileDetailSheet';
 import { MobileTabBar, type MobileTab } from './MobileTabBar';
+import { FiltersSheet } from './FiltersSheet';
 
 type Mode = 'list' | 'map' | 'detail';
 
@@ -22,13 +23,14 @@ const rootStyle: CSSProperties = {
 
 export function MobileShell() {
   const { listings, profile, isLoading, error } = useAtlasState();
-  const { setStatus, togglePin, dismiss } = useAtlasMutations();
+  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations();
   const [urlState, updateUrl] = useAtlasUrlState();
   const { scan, start: startScan } = useScan();
 
   const [mode, setMode] = useState<Mode>(urlState.listing ? 'detail' : 'list');
   // Tracks the screen behind the sheet so the user returns to it on close.
   const [priorMode, setPriorMode] = useState<'list' | 'map'>('list');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Sync mode when URL listing param changes externally (e.g. back/forward).
   useEffect(() => {
@@ -43,11 +45,8 @@ export function MobileShell() {
   const stages = useMemo(() => listStages(listings), [listings]);
 
   const filtered = useMemo(
-    () =>
-      listings
-        .filter((l) => matchesStage(l, urlState.stage))
-        .sort((a, b) => Number(b.pinned) - Number(a.pinned)),
-    [listings, urlState.stage]
+    () => sortListings(listings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
+    [listings, urlState.stage, urlState.sort]
   );
 
   const selected: AtlasListing | null = useMemo(
@@ -76,7 +75,6 @@ export function MobileShell() {
       setMode('map');
       setPriorMode('map');
     }
-    // 'filters' — phase 6 will implement the filter sheet.
   };
 
   const activeTab: MobileTab = mode === 'map' ? 'map' : 'list';
@@ -96,10 +94,7 @@ export function MobileShell() {
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
           onSelect={handleSelect}
-          onOpenList={() => {
-            setMode('list');
-            setPriorMode('list');
-          }}
+          onOpenFilters={() => setFiltersOpen(true)}
         />
       ) : (
         <MobileList
@@ -109,32 +104,46 @@ export function MobileShell() {
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
           onSelect={handleSelect}
-          onOpenMap={() => {
-            setMode('map');
-            setPriorMode('map');
-          }}
           onScan={() => startScan()}
           scanning={!!scan && scan.status === 'running'}
+          onOpenFilters={() => setFiltersOpen(true)}
+          sort={urlState.sort}
+          onSortChange={(sort) => updateUrl({ sort })}
         />
       )}
 
-      {mode === 'detail' && selected ? (
-        <MobileDetailSheet
-          listing={selected}
-          onClose={handleCloseDetail}
-          onTogglePin={(id) => togglePin.mutate(id)}
-          onStatusChange={(id, status: AtlasListingStatus) =>
-            setStatus.mutate({ id, status, notes: selected.notes })
-          }
-          onNotesChange={(id, notes) =>
-            setStatus.mutate({ id, status: selected.status, notes })
-          }
-          onDismiss={(id) => {
-            dismiss.mutate(id);
-            handleCloseDetail();
-          }}
-        />
-      ) : null}
+      <FiltersSheet
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+        profile={profile}
+        stages={stages}
+        stage={urlState.stage}
+        onStageChange={(s) => updateUrl({ stage: s, listing: null })}
+        saving={saveProfile.isPending}
+        onSave={(next) => {
+          saveProfile.mutate(next, {
+            onSuccess: () => setFiltersOpen(false)
+          });
+        }}
+      />
+
+      <MobileDetailSheet
+        listing={mode === 'detail' ? selected : null}
+        onClose={handleCloseDetail}
+        onTogglePin={(id) => togglePin.mutate(id)}
+        onStatusChange={(id, status: AtlasListingStatus) => {
+          if (!selected) return;
+          setStatus.mutate({ id, status, notes: selected.notes });
+        }}
+        onNotesChange={(id, notes) => {
+          if (!selected) return;
+          setStatus.mutate({ id, status: selected.status, notes });
+        }}
+        onDismiss={(id) => {
+          dismiss.mutate(id);
+          handleCloseDetail();
+        }}
+      />
 
       {mode !== 'detail' ? (
         <MobileTabBar
@@ -146,6 +155,9 @@ export function MobileShell() {
 
       {isLoading ? <LoadingIndicator /> : null}
       {error ? <ErrorBanner message={(error as Error).message} /> : null}
+      {saveProfile.error ? (
+        <ErrorBanner message={(saveProfile.error as Error).message} />
+      ) : null}
     </div>
   );
 }

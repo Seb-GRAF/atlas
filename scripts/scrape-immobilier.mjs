@@ -8,6 +8,7 @@ import {
   buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
+  formatTransitLocation,
   formatMinutesText,
   getCachedRoute,
   normalizeTransitConnection,
@@ -527,6 +528,8 @@ function isExcludedType(item, config) {
 
 function isSizeEligible(item, config) {
   const minRooms = Number(config.filters?.minRoomsPreferred ?? 2);
+  const maxRoomsRaw = config.filters?.maxRoomsPreferred;
+  const maxRooms = maxRoomsRaw == null || maxRoomsRaw === '' ? Infinity : Number(maxRoomsRaw);
   const minSurface = Number(config.filters?.minSurfaceM2Preferred ?? 0);
   const minSurfaceFallback = Number(config.filters?.minSurfaceM2Fallback ?? 0);
   const allowMissingSurface = config.filters?.allowMissingSurface !== false;
@@ -538,6 +541,8 @@ function isSizeEligible(item, config) {
   if (!Number.isFinite(rooms) || rooms <= 0) {
     return false;
   }
+
+  if (Number.isFinite(maxRooms) && rooms > maxRooms) return false;
 
   const meetsRooms = rooms >= minRooms;
 
@@ -745,13 +750,15 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
   }
 }
 
-async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
+async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords = null, listingCoords = null) {
   if (!workAddress || !listingAddress) {
     return { minutes: null, route: null, status: 'missing-address' };
   }
 
   const transitRef = resolveTransitReference();
   const key = buildTransitCacheKey(listingAddress, workAddress);
+  const from = formatTransitLocation(listingCoords, listingAddress);
+  const to = formatTransitLocation(workCoords, workAddress);
   const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
   if (cached.fresh && cached.minutes != null) {
     return { minutes: cached.minutes, route: cached.route, status: 'ok' };
@@ -760,8 +767,8 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
   try {
     const url = new URL('https://transport.opendata.ch/v1/connections');
     url.searchParams.set('limit', '1');
-    url.searchParams.set('from', listingAddress);
-    url.searchParams.set('to', workAddress);
+    url.searchParams.set('from', from);
+    url.searchParams.set('to', to);
     url.searchParams.set('date', transitRef.date);
     url.searchParams.set('time', transitRef.arrivalTime);
     url.searchParams.set('isArrivalTime', '1');
@@ -833,7 +840,7 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
 
   const [drive, transit] = await Promise.all([
     fetchDrivingMinutes(workCoords, distance.listingCoords, routeCache),
-    fetchTransitRoute(workAddress, distance.listingAddress, routeCache)
+    fetchTransitRoute(workAddress, distance.listingAddress, routeCache, workCoords, distance.listingCoords)
   ]);
 
   setCommuteSuccessFields(item, {

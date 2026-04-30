@@ -1,5 +1,7 @@
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -7,7 +9,13 @@ import {
   type ReactNode
 } from 'react';
 import { createPortal } from 'react-dom';
-import maplibregl, { LngLatBoundsLike, Map as MapLibreMap, Marker } from 'maplibre-gl';
+import maplibregl, {
+  LngLatBounds,
+  LngLatBoundsLike,
+  Map as MapLibreMap,
+  Marker,
+  type StyleSpecification
+} from 'maplibre-gl';
 import { formatCHF } from './Mono';
 
 export type AtlasMapPin = {
@@ -15,6 +23,14 @@ export type AtlasMapPin = {
   lat: number;
   lon: number;
   totalChf: number;
+  precision?: 'address' | 'area' | null;
+};
+
+export type AtlasMapHandle = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetBearing: () => void;
+  flyToWorkplace: () => void;
 };
 
 type AtlasMapProps = {
@@ -31,21 +47,68 @@ type AtlasMapProps = {
   className?: string;
 };
 
-const DEMO_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
+// CARTO Positron — clean, warm-leaning light raster basemap that matches the
+// design palette closely without needing a custom vector style. CARTO requires
+// the {a,b,c,d} subdomain rotation; MapLibre doesn't expand {s} so we pass an
+// explicit URL list. Override the whole list with a single VITE_MAP_TILE_URL
+// for self-hosted / proxy setups.
+const DEFAULT_CARTO_TILES = ['a', 'b', 'c', 'd'].map(
+  (s) => `https://${s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png`
+);
 
-const WARM_CANVAS_FILTER =
-  'sepia(0.18) saturate(0.92) hue-rotate(-6deg) brightness(1.02) contrast(0.98)';
-const COOL_CANVAS_FILTER = 'saturate(0.9) brightness(1.01)';
+const CARTO_TILES: string[] = (() => {
+  const envUrl = import.meta.env?.VITE_MAP_TILE_URL as string | undefined;
+  if (!envUrl) return DEFAULT_CARTO_TILES;
+  // Old VITE_MAP_TILE_URL used Leaflet's {s}/{r} placeholders — expand them
+  // here so the env stays compatible across implementations.
+  if (envUrl.includes('{s}')) {
+    return ['a', 'b', 'c', 'd'].map((s) => envUrl.replace('{s}', s).replace('{r}', '@2x'));
+  }
+  return [envUrl.replace('{r}', '@2x')];
+})();
+
+const CARTO_ATTRIBUTION =
+  (import.meta.env?.VITE_MAP_ATTRIBUTION as string | undefined) ||
+  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>';
+
+function buildRasterStyle(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      basemap: {
+        type: 'raster',
+        tiles: CARTO_TILES,
+        // @2x tiles are 512px — setting tileSize to match keeps the
+        // rendered zoom level and label sizes correct on retina screens.
+        tileSize: 512,
+        attribution: CARTO_ATTRIBUTION,
+        maxzoom: 19
+      }
+    },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': '#f0e8db' } },
+      { id: 'basemap', type: 'raster', source: 'basemap' }
+    ]
+  };
+}
+
+// Subtle warm wash blended on top of CARTO Positron to nudge it toward the
+// design palette (#f0e8db land, #fff8ee roads). Multiply with a warm tone is
+// gentler than the previous sepia/hue-rotate which muddied colors.
+const WARM_OVERLAY_FILTER = 'saturate(0.92) brightness(1.01) contrast(0.97)';
+const COOL_OVERLAY_FILTER = 'saturate(0.95) brightness(1.0)';
 
 const DEFAULT_CENTER = { lat: 46.47, lon: 6.84, zoom: 11 };
 
 function PinButton({
   totalChf,
   selected,
+  approximate,
   onClick
 }: {
   totalChf: number;
   selected: boolean;
+  approximate: boolean;
   onClick: () => void;
 }) {
   return (
@@ -58,7 +121,7 @@ function PinButton({
       style={{
         padding: '5px 10px',
         borderRadius: 999,
-        border: 0,
+        border: approximate && !selected ? '1px dashed rgba(22,20,15,.32)' : 0,
         background: selected ? 'var(--atlas-ink)' : '#fff',
         color: selected ? '#fff' : 'var(--atlas-ink)',
         fontFamily: 'var(--atlas-mono)',
@@ -67,6 +130,7 @@ function PinButton({
         letterSpacing: '-0.01em',
         whiteSpace: 'nowrap',
         cursor: 'pointer',
+        opacity: approximate && !selected ? 0.78 : 1,
         transform: selected ? 'scale(1.06)' : 'scale(1)',
         boxShadow: selected
           ? '0 8px 24px rgba(22,20,15,.28), 0 0 0 2px #fff'
@@ -75,8 +139,96 @@ function PinButton({
           'transform 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease',
         fontVariantNumeric: 'tabular-nums'
       }}
+      title={approximate ? 'Position approximative' : undefined}
     >
       {formatCHF(totalChf)}
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          marginLeft: 3,
+          opacity: 0.6,
+          textTransform: 'lowercase'
+        }}
+      >
+        chf
+      </span>
+    </button>
+  );
+}
+
+function ClusterPin({
+  count,
+  minChf,
+  maxChf,
+  onClick
+}: {
+  count: number;
+  minChf: number;
+  maxChf: number;
+  onClick: () => void;
+}) {
+  const label =
+    minChf === maxChf ? formatCHF(minChf) : `${formatCHF(minChf)}–${formatCHF(maxChf)}`;
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '5px 10px 5px 6px',
+        borderRadius: 999,
+        border: 0,
+        background: '#fff',
+        color: 'var(--atlas-ink)',
+        fontFamily: 'var(--atlas-mono)',
+        fontSize: 12,
+        fontWeight: 600,
+        letterSpacing: '-0.01em',
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+        boxShadow: '0 4px 14px rgba(22,20,15,.16), 0 0 0 1px rgba(22,20,15,.06)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease',
+        fontVariantNumeric: 'tabular-nums'
+      }}
+      title={`${count} annonces · cliquer pour zoomer`}
+    >
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minWidth: 20,
+          height: 20,
+          padding: '0 6px',
+          borderRadius: 999,
+          background: 'var(--atlas-ink)',
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 700
+        }}
+      >
+        {count}
+      </span>
+      <span>
+        {label}
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 600,
+            marginLeft: 3,
+            opacity: 0.6,
+            textTransform: 'lowercase'
+          }}
+        >
+          chf
+        </span>
+      </span>
     </button>
   );
 }
@@ -95,7 +247,8 @@ function WorkplacePill({ label }: { label: string }) {
         boxShadow: '0 6px 16px rgba(0,0,0,.18)',
         fontFamily: 'var(--atlas-sans)',
         pointerEvents: 'none',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        transform: 'translate(0, -6px)'
       }}
     >
       {label}
@@ -103,130 +256,281 @@ function WorkplacePill({ label }: { label: string }) {
   );
 }
 
-type ManagedMarker = {
-  marker: Marker;
-  el: HTMLDivElement;
+type SinglePinGroup = {
+  kind: 'pin';
+  id: string;
+  lat: number;
+  lon: number;
   pin: AtlasMapPin;
 };
 
-export function AtlasMap({
-  pins,
-  selectedId = null,
-  onSelect,
-  showWorkplace = true,
-  workplaceLabel = 'Travail · EPFL',
-  workplace,
-  initialBounds,
-  initialCenter,
-  mode = 'warm',
-  style,
-  className
-}: AtlasMapProps) {
+type ClusterGroup = {
+  kind: 'cluster';
+  id: string;
+  lat: number;
+  lon: number;
+  members: AtlasMapPin[];
+};
+
+type PinGroup = SinglePinGroup | ClusterGroup;
+
+type ManagedMarker = {
+  marker: Marker;
+  el: HTMLDivElement;
+  group: PinGroup;
+};
+
+// Pixel radius within which two pins collapse into a cluster. Tuned to roughly
+// match the rendered pill width so visually-overlapping pills always merge.
+const CLUSTER_PIXEL_RADIUS = 44;
+
+function clusterPins(map: MapLibreMap, pins: AtlasMapPin[]): PinGroup[] {
+  const valid = pins.filter((p) => isValidLatLon(p.lat, p.lon));
+  if (valid.length === 0) return [];
+
+  // Project once; cluster in screen-space so the threshold is pixel-stable
+  // across zoom levels.
+  type Projected = { pin: AtlasMapPin; x: number; y: number; used: boolean };
+  const projected: Projected[] = valid.map((pin) => {
+    const point = map.project([pin.lon, pin.lat]);
+    return { pin, x: point.x, y: point.y, used: false };
+  });
+
+  const groups: PinGroup[] = [];
+  const r2 = CLUSTER_PIXEL_RADIUS * CLUSTER_PIXEL_RADIUS;
+
+  for (let i = 0; i < projected.length; i++) {
+    const seed = projected[i];
+    if (seed.used) continue;
+    seed.used = true;
+    const members: AtlasMapPin[] = [seed.pin];
+    let sumX = seed.x;
+    let sumY = seed.y;
+
+    for (let j = i + 1; j < projected.length; j++) {
+      const other = projected[j];
+      if (other.used) continue;
+      const dx = other.x - seed.x;
+      const dy = other.y - seed.y;
+      if (dx * dx + dy * dy <= r2) {
+        other.used = true;
+        members.push(other.pin);
+        sumX += other.x;
+        sumY += other.y;
+      }
+    }
+
+    if (members.length === 1) {
+      const p = members[0];
+      groups.push({ kind: 'pin', id: p.id, lat: p.lat, lon: p.lon, pin: p });
+    } else {
+      const center = map.unproject([sumX / members.length, sumY / members.length]);
+      // Stable id from sorted member ids — keeps the same DOM marker across
+      // re-clusters when the underlying group is unchanged.
+      const id = `cluster:${members
+        .map((m) => m.id)
+        .sort()
+        .join(',')}`;
+      groups.push({
+        kind: 'cluster',
+        id,
+        lat: center.lat,
+        lon: center.lng,
+        members
+      });
+    }
+  }
+
+  return groups;
+}
+
+function isValidLatLon(lat: number, lon: number) {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180
+  );
+}
+
+function pinsBoundsKey(pins: AtlasMapPin[], workplace?: { lat: number; lon: number }) {
+  // Build a stable signature of the geographic set; fitBounds only re-runs when
+  // this changes (otherwise selecting a pin would keep refitting).
+  const parts = pins
+    .filter((p) => isValidLatLon(p.lat, p.lon))
+    .map((p) => `${p.id}:${p.lat.toFixed(5)},${p.lon.toFixed(5)}`)
+    .sort();
+  if (workplace && isValidLatLon(workplace.lat, workplace.lon)) {
+    parts.push(`w:${workplace.lat.toFixed(5)},${workplace.lon.toFixed(5)}`);
+  }
+  return parts.join('|');
+}
+
+export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function AtlasMap(
+  {
+    pins,
+    selectedId = null,
+    onSelect,
+    showWorkplace = true,
+    workplaceLabel = 'Travail · EPFL',
+    workplace,
+    initialBounds,
+    initialCenter,
+    mode = 'warm',
+    style,
+    className
+  },
+  ref
+) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, ManagedMarker>>(new Map());
   const workplaceMarkerRef = useRef<{ marker: Marker; el: HTMLDivElement } | null>(null);
-  const [, force] = useState(0);
+  const lastBoundsKeyRef = useRef<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [renderTick, setRenderTick] = useState(0);
 
   const center = initialCenter ?? DEFAULT_CENTER;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomIn: () => {
+        mapRef.current?.zoomIn({ duration: 250 });
+      },
+      zoomOut: () => {
+        mapRef.current?.zoomOut({ duration: 250 });
+      },
+      resetBearing: () => {
+        mapRef.current?.easeTo({ bearing: 0, pitch: 0, duration: 350 });
+      },
+      flyToWorkplace: () => {
+        const map = mapRef.current;
+        if (!map || !workplace) return;
+        map.easeTo({
+          center: [workplace.lon, workplace.lat],
+          zoom: Math.max(map.getZoom(), 13),
+          duration: 450
+        });
+      }
+    }),
+    [workplace?.lat, workplace?.lon]
+  );
 
   // Init map once.
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: DEMO_STYLE_URL,
+      style: buildRasterStyle(),
       center: [center.lon, center.lat],
       zoom: center.zoom ?? DEFAULT_CENTER.zoom,
       attributionControl: { compact: true },
-      cooperativeGestures: false
+      cooperativeGestures: false,
+      maxZoom: 19
     });
 
     if (initialBounds) {
       map.fitBounds(initialBounds, { padding: 64, animate: false });
     }
 
-    // Disable scroll-wheel zoom without ctrl/cmd modifier on desktop — page should
-    // scroll first; modifier-zoom is a deliberate gesture.
-    map.scrollZoom.disable();
-    const wheelHandler = (event: WheelEvent) => {
-      if (event.ctrlKey || event.metaKey) {
-        event.preventDefault();
-        // Re-enable for this gesture only.
-        map.scrollZoom.enable();
-        // Manually zoom by passing the event back through.
-        const delta = event.deltaY * -0.002;
-        map.zoomTo(map.getZoom() + delta, { duration: 80 });
-        // Disable again on next tick so a non-modifier wheel scrolls the page.
-        window.setTimeout(() => map.scrollZoom.disable(), 0);
-      }
-    };
-    containerRef.current.addEventListener('wheel', wheelHandler, { passive: false });
+    // Plain scroll-wheel zoom — the map fills its panel so there's no scroll
+    // hijack to worry about.
+    map.scrollZoom.enable();
 
     map.on('click', (event) => {
-      // If the click target is a marker, the marker handler stops propagation. Anything
-      // reaching the map = background click.
       const target = event.originalEvent.target as HTMLElement | null;
       if (target && target.closest('.atlas-map-marker')) return;
       onSelect?.(null);
     });
 
-    map.on('load', () => force((n) => n + 1));
+    map.on('load', () => setLoaded(true));
 
     mapRef.current = map;
     return () => {
-      containerRef.current?.removeEventListener('wheel', wheelHandler);
       map.remove();
       mapRef.current = null;
       markersRef.current.clear();
       workplaceMarkerRef.current = null;
+      lastBoundsKeyRef.current = null;
+      setLoaded(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sync listing pin markers with `pins`. We portal React content into each marker's
-  // DOM element so click/state transitions render through React.
+  // Re-cluster on map move/zoom. We bump a tick so the marker-sync effect below
+  // re-runs against the freshly-projected pixel positions. rAF-coalesced so a
+  // long pan/zoom doesn't thrash.
+  const [moveTick, setMoveTick] = useState(0);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !loaded) return;
+    let raf = 0;
+    const onMove = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setMoveTick((n) => n + 1);
+      });
+    };
+    map.on('move', onMove);
+    map.on('zoom', onMove);
+    return () => {
+      map.off('move', onMove);
+      map.off('zoom', onMove);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [loaded]);
+
+  // Sync listing pin markers with the current group set. We portal React
+  // content into each marker's DOM element so click/state transitions render
+  // through React. Gated on `loaded` because Markers attached before the map's
+  // first frame render at (0,0) and stay invisible until a later interaction
+  // forces a reflow.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    const groups = clusterPins(map, pins);
     const next = new Map<string, ManagedMarker>();
     const seen = new Set<string>();
 
-    for (const pin of pins) {
-      seen.add(pin.id);
-      const existing = markersRef.current.get(pin.id);
+    for (const group of groups) {
+      seen.add(group.id);
+      const existing = markersRef.current.get(group.id);
       if (existing) {
-        existing.marker.setLngLat([pin.lon, pin.lat]);
-        existing.pin = pin;
-        next.set(pin.id, existing);
+        existing.marker.setLngLat([group.lon, group.lat]);
+        existing.group = group;
+        next.set(group.id, existing);
         continue;
       }
       const el = document.createElement('div');
       el.className = 'atlas-map-marker';
       el.style.cursor = 'pointer';
       const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
-        .setLngLat([pin.lon, pin.lat])
+        .setLngLat([group.lon, group.lat])
         .addTo(map);
-      next.set(pin.id, { marker, el, pin });
+      next.set(group.id, { marker, el, group });
     }
 
-    // Remove markers no longer in pins.
     for (const [id, managed] of markersRef.current) {
       if (!seen.has(id)) managed.marker.remove();
     }
     markersRef.current = next;
-    force((n) => n + 1);
-  }, [pins]);
+    setRenderTick((n) => n + 1);
+  }, [pins, loaded, moveTick]);
 
   // Workplace marker.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !loaded) return;
     const wp = workplace;
-    if (!showWorkplace || !wp) {
+    if (!showWorkplace || !wp || !isValidLatLon(wp.lat, wp.lon)) {
       workplaceMarkerRef.current?.marker.remove();
       workplaceMarkerRef.current = null;
-      force((n) => n + 1);
+      setRenderTick((n) => n + 1);
       return;
     }
     if (workplaceMarkerRef.current) {
@@ -238,24 +542,132 @@ export function AtlasMap({
         .setLngLat([wp.lon, wp.lat])
         .addTo(map);
       workplaceMarkerRef.current = { marker, el };
-      force((n) => n + 1);
+      setRenderTick((n) => n + 1);
     }
-  }, [showWorkplace, workplace?.lat, workplace?.lon]);
+  }, [showWorkplace, workplace?.lat, workplace?.lon, loaded]);
+
+  // Auto-fit the viewport to the visible pins (+ workplace) whenever the pin
+  // set changes geographically. Without this the map kept its initial center
+  // and pins would land outside the viewport.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const key = pinsBoundsKey(pins, showWorkplace ? workplace : undefined);
+    if (key === lastBoundsKeyRef.current) return;
+    lastBoundsKeyRef.current = key;
+    const valid = pins.filter((p) => isValidLatLon(p.lat, p.lon));
+    if (valid.length === 0 && !(showWorkplace && workplace)) return;
+
+    const bounds = new LngLatBounds();
+    for (const p of valid) bounds.extend([p.lon, p.lat]);
+    if (showWorkplace && workplace && isValidLatLon(workplace.lat, workplace.lon)) {
+      bounds.extend([workplace.lon, workplace.lat]);
+    }
+
+    const run = () => {
+      if (valid.length === 1 && !(showWorkplace && workplace)) {
+        map.easeTo({ center: [valid[0].lon, valid[0].lat], zoom: 13, duration: 350 });
+        return;
+      }
+      // Padding clears the floating glass list (left ~412px) and detail panel
+      // (right ~412px) on desktop; on mobile the panels don't overlay the map.
+      const isWide = (map.getContainer().clientWidth || 0) >= 1024;
+      map.fitBounds(bounds, {
+        padding: isWide
+          ? { top: 96, right: 432, bottom: 64, left: 432 }
+          : { top: 80, right: 32, bottom: 200, left: 32 },
+        maxZoom: 14,
+        duration: 450
+      });
+    };
+
+    if (map.isStyleLoaded()) run();
+    else map.once('load', run);
+  }, [pins, showWorkplace, workplace?.lat, workplace?.lon]);
+
+  // Pan to the selected pin so it's always visible after selection.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selectedId) return;
+    const pin = pins.find((p) => p.id === selectedId);
+    if (!pin || !isValidLatLon(pin.lat, pin.lon)) return;
+    const run = () => {
+      map.easeTo({
+        center: [pin.lon, pin.lat],
+        zoom: Math.max(map.getZoom(), 13),
+        duration: 350,
+        essential: true
+      });
+    };
+    if (map.isStyleLoaded()) run();
+    else map.once('load', run);
+  }, [selectedId, pins]);
+
+  const zoomToCluster = (members: AtlasMapPin[]) => {
+    const map = mapRef.current;
+    if (!map || members.length === 0) return;
+    const bounds = new LngLatBounds();
+    for (const m of members) bounds.extend([m.lon, m.lat]);
+    // If members share a coordinate (e.g. same building), bounds collapses to a
+    // point — easeTo with a higher zoom instead of fitBounds-on-zero-area which
+    // is a no-op.
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    if (sw.lat === ne.lat && sw.lng === ne.lng) {
+      map.easeTo({
+        center: [sw.lng, sw.lat],
+        zoom: Math.min((map.getMaxZoom?.() ?? 19) - 1, map.getZoom() + 3),
+        duration: 450
+      });
+      return;
+    }
+    const isWide = (map.getContainer().clientWidth || 0) >= 1024;
+    map.fitBounds(bounds, {
+      padding: isWide
+        ? { top: 96, right: 432, bottom: 64, left: 432 }
+        : { top: 80, right: 32, bottom: 200, left: 32 },
+      maxZoom: 17,
+      duration: 450
+    });
+  };
 
   const portals: ReactNode[] = useMemo(() => {
     const items: ReactNode[] = [];
     for (const [id, managed] of markersRef.current) {
-      items.push(
-        createPortal(
-          <PinButton
-            totalChf={managed.pin.totalChf}
-            selected={selectedId === id}
-            onClick={() => onSelect?.(id)}
-          />,
-          managed.el,
-          id
-        )
-      );
+      const group = managed.group;
+      if (group.kind === 'pin') {
+        items.push(
+          createPortal(
+            <PinButton
+              totalChf={group.pin.totalChf}
+              selected={selectedId === group.pin.id}
+              approximate={group.pin.precision === 'area'}
+              onClick={() => onSelect?.(group.pin.id)}
+            />,
+            managed.el,
+            id
+          )
+        );
+      } else {
+        let minChf = Infinity;
+        let maxChf = -Infinity;
+        for (const m of group.members) {
+          if (m.totalChf < minChf) minChf = m.totalChf;
+          if (m.totalChf > maxChf) maxChf = m.totalChf;
+        }
+        items.push(
+          createPortal(
+            <ClusterPin
+              count={group.members.length}
+              minChf={minChf}
+              maxChf={maxChf}
+              onClick={() => zoomToCluster(group.members)}
+            />,
+            managed.el,
+            id
+          )
+        );
+      }
     }
     if (workplaceMarkerRef.current) {
       items.push(
@@ -267,11 +679,12 @@ export function AtlasMap({
       );
     }
     return items;
-    // markersRef/workplaceMarkerRef are mutable; force re-render via the `_` state.
+    // renderTick fires after marker sync so the portal map sees freshly-created
+    // marker elements; markersRef is mutable so we can't depend on it directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pins, selectedId, workplaceLabel, onSelect]);
+  }, [renderTick, selectedId, workplaceLabel, onSelect]);
 
-  const filter = mode === 'warm' ? WARM_CANVAS_FILTER : COOL_CANVAS_FILTER;
+  const filter = mode === 'warm' ? WARM_OVERLAY_FILTER : COOL_OVERLAY_FILTER;
 
   return (
     <div
@@ -293,4 +706,4 @@ export function AtlasMap({
       {portals}
     </div>
   );
-}
+});

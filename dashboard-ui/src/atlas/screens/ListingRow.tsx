@@ -84,8 +84,18 @@ export function ListingRow({ listing, selected, onSelect }: ListingRowProps) {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={eyebrowStyle}>{listing.area || '—'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <span
+              style={{
+                ...eyebrowStyle,
+                minWidth: 0,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }}
+            >
+              {listing.area || '—'}
+            </span>
             {listing.isNew ? (
               <>
                 <span

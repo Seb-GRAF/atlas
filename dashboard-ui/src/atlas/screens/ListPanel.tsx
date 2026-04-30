@@ -1,7 +1,9 @@
 import type { CSSProperties } from 'react';
-import { GlassPanel, Hairline, Icons } from '../components';
+import { GlassPanel, Hairline } from '../components';
 import { ListingRow } from './ListingRow';
+import { SortMenu } from './SortMenu';
 import type { AtlasListing } from '../types';
+import type { AtlasSortValue } from '../url';
 
 type ListPanelProps = {
   zones: string[];
@@ -12,6 +14,8 @@ type ListPanelProps = {
   totalCount?: number;
   emptyContent?: React.ReactNode;
   scanStatus?: React.ReactNode;
+  sort: AtlasSortValue;
+  onSortChange: (sort: AtlasSortValue) => void;
 };
 
 const panelStyle: CSSProperties = {
@@ -50,14 +54,25 @@ export function ListPanel({
   generatedAt,
   totalCount,
   emptyContent,
-  scanStatus
+  scanStatus,
+  sort,
+  onSortChange
 }: ListPanelProps) {
   const count = totalCount ?? listings.length;
 
   return (
     <GlassPanel variant="panel" style={panelStyle}>
-      <div style={{ padding: '16px 18px 12px' }}>
-        <div style={eyebrowStyle}>{formatZones(zones)}</div>
+      <div style={{ padding: '16px 18px 12px', minWidth: 0 }}>
+        <div
+          style={{
+            ...eyebrowStyle,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
+          }}
+        >
+          {formatZones(zones)}
+        </div>
         <div
           style={{
             display: 'flex',
@@ -86,23 +101,7 @@ export function ListPanel({
               gap: 2
             }}
           >
-            <button
-              type="button"
-              style={{
-                background: 'transparent',
-                border: 0,
-                fontFamily: 'var(--atlas-sans)',
-                fontSize: 12,
-                color: 'var(--atlas-ink-2)',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4
-              }}
-            >
-              Trier
-              <Icons.ChevronDown size={11} stroke={1.6} />
-            </button>
+            <SortMenu sort={sort} onChange={onSortChange} align="right" />
             {generatedAt ? (
               <span style={{ fontSize: 10.5, color: 'var(--atlas-ink-3)' }}>maj. {generatedAt}</span>
             ) : null}
@@ -120,6 +119,7 @@ export function ListPanel({
           style={{
             flex: 1,
             overflowY: 'auto',
+            overflowX: 'hidden',
             padding: '8px 8px 16px',
             display: 'flex',
             flexDirection: 'column',

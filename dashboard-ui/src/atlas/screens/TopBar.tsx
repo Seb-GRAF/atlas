@@ -15,6 +15,14 @@ type TopBarProps = {
   scanning: boolean;
 };
 
+const TOPBAR_STAGE_LABELS: Record<AtlasStageValue, string> = {
+  triage: 'À trier',
+  active: 'En cours',
+  visits: 'Visité',
+  files: 'Dossiers',
+  done: 'Clos'
+};
+
 const containerStyle: CSSProperties = {
   position: 'absolute',
   top: 16,
@@ -99,8 +107,12 @@ export function TopBar({
       <span style={{ flex: 1 }} />
 
       <GlassPill padding="4px" style={{ gap: 0 }}>
-        {stages
-          .filter((s) => s.value === 'triage' || s.value === 'active' || s.value === 'visits')
+        {(['triage', 'active', 'visits', 'done'] as AtlasStageValue[])
+          .map((value) => {
+            const found = stages.find((s) => s.value === value);
+            return found ? { ...found, label: TOPBAR_STAGE_LABELS[value] } : null;
+          })
+          .filter((s): s is AtlasStage => s !== null)
           .map((s) => {
             const active = s.value === stage;
             return (

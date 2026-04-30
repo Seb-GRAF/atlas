@@ -7,6 +7,7 @@ import type {
   AtlasStage,
   AtlasStageValue
 } from '../types';
+import type { AtlasSortValue } from '../url';
 
 const KNOWN_SOURCES: AtlasListingSource[] = [
   'immobilier.ch',
@@ -102,18 +103,24 @@ type AgeMeta = {
   source: 'published' | 'firstSeen' | 'none';
 };
 
+function parseIsoMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ts = new Date(iso).getTime();
+  return Number.isFinite(ts) ? ts : null;
+}
+
 function ageMeta(item: ApiListing): AgeMeta {
-  const parse = (iso: string | null | undefined): string | null => {
-    if (!iso) return null;
-    const ts = new Date(iso).getTime();
-    if (!Number.isFinite(ts)) return null;
-    return formatAge(Math.max(0, Date.now() - ts));
-  };
-  const published = parse(item.publishedAt);
+  const fmt = (ts: number | null): string | null =>
+    ts == null ? null : formatAge(Math.max(0, Date.now() - ts));
+  const published = fmt(parseIsoMs(item.publishedAt));
   if (published) return { label: published, source: 'published' };
-  const seen = parse(item.firstSeenAt);
+  const seen = fmt(parseIsoMs(item.firstSeenAt));
   if (seen) return { label: seen, source: 'firstSeen' };
   return { label: null, source: 'none' };
+}
+
+function publishedTs(item: ApiListing): number | null {
+  return parseIsoMs(item.publishedAt) ?? parseIsoMs(item.firstSeenAt);
 }
 
 function formatRooms(rooms: number): string {
@@ -160,6 +167,7 @@ export function adaptListing(item: ApiListing): AtlasListing {
         : `il y a ${meta.label}`
       : 'Inconnue',
     publishedShort: meta.label ?? '',
+    publishedTs: publishedTs(item),
     transitText: item.transitText ?? null,
     driveText: item.driveText ?? null,
     distanceText: item.distanceText ?? null,
@@ -173,12 +181,34 @@ export function adaptListing(item: ApiListing): AtlasListing {
     commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
     lat: item.mapLocation?.lat ?? null,
     lon: item.mapLocation?.lon ?? null,
+    locationPrecision: item.mapLocation?.precision ?? null,
     images: getImageUrls(item)
   };
 }
 
 export function adaptListings(state: DashboardState): AtlasListing[] {
   return state.tracker.listings.map(adaptListing);
+}
+
+export function sortListings(list: AtlasListing[], sort: AtlasSortValue): AtlasListing[] {
+  const cmp = (a: AtlasListing, b: AtlasListing): number => {
+    if (a.pinned !== b.pinned) return Number(b.pinned) - Number(a.pinned);
+    if (sort === 'priceAsc' || sort === 'priceDesc') {
+      const av = a.totalChf;
+      const bv = b.totalChf;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sort === 'priceAsc' ? av - bv : bv - av;
+    }
+    const at = a.publishedTs;
+    const bt = b.publishedTs;
+    if (at == null && bt == null) return 0;
+    if (at == null) return 1;
+    if (bt == null) return -1;
+    return bt - at;
+  };
+  return [...list].sort(cmp);
 }
 
 const STAGE_DEFINITIONS: { value: AtlasStageValue; label: string; match: (l: AtlasListing) => boolean }[] = [
@@ -253,8 +283,6 @@ export function adaptProfile(detail: ProfileDetail | null, state: DashboardState
   const generatedRaw = state?.latest?.generatedAt ?? null;
   const generatedLabel = generatedRaw ? relativeFr(generatedRaw) : '';
 
-  const roomsMaxRaw = detail?.filters?.maxRoomsPreferred;
-
   return {
     slug,
     shortTitle: detail?.shortTitle ?? state?.profile ?? 'Atlas',
@@ -268,7 +296,7 @@ export function adaptProfile(detail: ProfileDetail | null, state: DashboardState
     budgetMaxChf: detail?.filters?.maxTotalChf ?? null,
     budgetCeilingChf: detail?.filters?.maxTotalHardChf ?? null,
     roomsMin: detail?.filters?.minRoomsPreferred ?? null,
-    roomsMax: typeof roomsMaxRaw === 'number' ? roomsMaxRaw : null,
+    roomsMax: detail?.filters?.maxRoomsPreferred ?? null,
     enabledSources: enabled
   };
 }

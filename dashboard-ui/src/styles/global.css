@@ -116,12 +116,24 @@ body {
 @keyframes atlas-detail-in {
   from {
     opacity: 0;
-    transform: translateX(12px);
+    transform: translateX(calc(100% + 24px));
   }
 
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@keyframes atlas-detail-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(calc(100% + 24px));
   }
 }
 
@@ -956,4 +968,274 @@ body {
   font-size: 11px;
   font-weight: 650;
   line-height: 1.25;
+}
+
+/* Touch devices: hide scrollbars chrome but keep scroll behavior. */
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body,
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    background: transparent;
+  }
+  html,
+  body,
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+}
+
+/* Opt-in utility class so non-touch devices also get a clean scroll
+   for the mobile carousel and chip rows. */
+.atlas-no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.atlas-no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Vaul drawers: prevent any descendant horizontal overflow from leaking. */
+[data-vaul-drawer] {
+  overflow-x: hidden;
+}
+body[data-vaul-drawer-open] {
+  overflow-x: hidden;
+}
+
+/* While the lightbox is open: lock body scroll. Outside-click protection
+ * for the drawer behind is handled by Drawer.Content's onPointerDownOutside
+ * guard in MobileDetailSheet.tsx — no need for pointer-events: none here. */
+body.atlas-lightbox-open {
+  overflow: hidden;
+  touch-action: none;
+}
+
+/* ----------------------------------------------------------------------
+ * Lightgallery — Atlas overrides.
+ * Re-skin the default chrome (toolbar, prev/next, thumbnails, counter)
+ * to match the Atlas warm-paper / ink design system.
+ * ---------------------------------------------------------------------- */
+/* Specificity hack — these selectors load before lightgallery's own CSS,
+ * so bump weight (or use !important on hard wins) to ensure overrides apply. */
+.lg-backdrop.lg-backdrop {
+  background: rgba(22, 20, 15, 0.78);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+.lg-backdrop.in {
+  opacity: 1;
+}
+
+.lg-outer,
+.lg-outer .lg-content,
+.lg-outer .lg-counter,
+.lg-outer .lg-sub-html {
+  font-family: var(--atlas-sans);
+  color: var(--atlas-paper);
+}
+
+/* Slide image — match Atlas card radius. The actual image element in the
+ * dynamic lightbox is .lg-object inside .lg-img-wrap. */
+.lg-outer .lg-img-wrap img.lg-object,
+.lg-outer .lg-item img.lg-object {
+  border-radius: var(--atlas-r-card) !important;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.18),
+    0 12px 28px -16px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(253, 251, 247, 0.08) !important;
+  background: var(--atlas-soft);
+}
+/* Don't round during zoom — looks broken at high scale */
+.lg-outer.lg-zoomed .lg-img-wrap img.lg-object,
+.lg-outer.lg-zoomed .lg-item img.lg-object {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Toolbar (top bar with close + zoom buttons) */
+.lg-outer .lg-toolbar {
+  background: linear-gradient(
+    to bottom,
+    rgba(22, 20, 15, 0.55) 0%,
+    rgba(22, 20, 15, 0) 100%
+  );
+}
+
+/* All toolbar / nav icon buttons share the same pill styling */
+.lg-outer.lg-outer .lg-toolbar .lg-icon,
+.lg-outer.lg-outer .lg-prev,
+.lg-outer.lg-outer .lg-next {
+  width: 40px;
+  height: 40px;
+  margin: 8px;
+  border-radius: 999px;
+  background: rgba(253, 251, 247, 0.92);
+  color: var(--atlas-ink);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(22, 20, 15, 0.06);
+  backdrop-filter: blur(12px) saturate(170%);
+  -webkit-backdrop-filter: blur(12px) saturate(170%);
+  transition: background 140ms ease, transform 140ms ease,
+    box-shadow 140ms ease, opacity 140ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lg-outer .lg-toolbar .lg-icon {
+  font-size: 18px;
+}
+.lg-outer.lg-outer .lg-toolbar .lg-icon:hover,
+.lg-outer.lg-outer .lg-prev:hover:not(.disabled),
+.lg-outer.lg-outer .lg-next:hover:not(.disabled) {
+  background: var(--atlas-paper);
+  color: var(--atlas-ink);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(22, 20, 15, 0.08);
+}
+.lg-outer .lg-toolbar .lg-icon:focus-visible,
+.lg-outer .lg-prev:focus-visible,
+.lg-outer .lg-next:focus-visible {
+  outline: 2px solid var(--atlas-ember);
+  outline-offset: 2px;
+}
+
+/* Prev / next position — keep them centered vertically */
+.lg-outer.lg-outer .lg-prev,
+.lg-outer.lg-outer .lg-next {
+  top: 50%;
+  margin-top: -20px;
+}
+.lg-outer.lg-outer .lg-prev {
+  left: 16px;
+}
+.lg-outer.lg-outer .lg-next {
+  right: 16px;
+}
+.lg-outer.lg-outer .lg-prev.disabled,
+.lg-outer.lg-outer .lg-next.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Counter (e.g. "3 / 12") */
+.lg-outer.lg-outer .lg-counter {
+  font-family: var(--atlas-mono);
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--atlas-paper);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(22, 20, 15, 0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  margin: 14px 0 0 16px;
+}
+
+/* Sub-html (caption strip below image) */
+.lg-outer .lg-sub-html {
+  background: linear-gradient(
+    to top,
+    rgba(22, 20, 15, 0.65) 0%,
+    rgba(22, 20, 15, 0) 100%
+  );
+  font-family: var(--atlas-sans);
+  font-size: 13px;
+  color: var(--atlas-paper);
+}
+.lg-outer .lg-sub-html h4 {
+  font-family: var(--atlas-sans);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+.lg-outer .lg-sub-html a {
+  color: var(--atlas-ember-2);
+}
+
+/* Thumbnail strip — keep lightgallery's float-based layout, just re-skin */
+.lg-outer.lg-outer .lg-thumb-outer {
+  background: rgba(22, 20, 15, 0.55) !important;
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  border-top: 1px solid rgba(253, 251, 247, 0.08);
+  box-shadow: 0 -10px 30px -10px rgba(0, 0, 0, 0.4);
+}
+.lg-outer.lg-outer .lg-thumb-item {
+  border-radius: var(--atlas-r-md) !important;
+  border: 1px solid rgba(253, 251, 247, 0.10) !important;
+  opacity: 0.6;
+  transition: opacity 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+.lg-outer.lg-outer .lg-thumb-item:hover {
+  opacity: 0.95;
+  border-color: rgba(253, 251, 247, 0.30) !important;
+}
+.lg-outer.lg-outer .lg-thumb-item.active,
+.lg-outer.lg-outer .lg-thumb-item.active:hover {
+  opacity: 1;
+  border: 2px solid var(--atlas-ember) !important;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 0 3px rgba(253, 251, 247, 0.08);
+}
+.lg-outer.lg-outer .lg-thumb-item img {
+  border-radius: calc(var(--atlas-r-md) - 2px);
+}
+
+/* Toggle thumbnails button — same pill treatment */
+.lg-outer .lg-toggle-thumb {
+  background: rgba(253, 251, 247, 0.92);
+  color: var(--atlas-ink);
+  border-radius: 999px 999px 0 0;
+  box-shadow: 0 -4px 14px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(22, 20, 15, 0.06);
+  width: 44px;
+  height: 28px;
+  top: -28px;
+}
+.lg-outer .lg-toggle-thumb:hover {
+  background: var(--atlas-paper);
+  color: var(--atlas-ink);
+}
+
+/* Progress bar (between slides) */
+.lg-progress-bar {
+  background: rgba(253, 251, 247, 0.18);
+}
+.lg-progress-bar .lg-progress {
+  background: var(--atlas-ember);
+}
+
+/* Loader spinner */
+.lg-outer .lg-icon.lg-loading {
+  color: var(--atlas-ember);
+}
+
+/* Mobile tweaks — tighter chrome */
+@media (max-width: 600px) {
+  .lg-outer .lg-toolbar .lg-icon,
+  .lg-outer .lg-prev,
+  .lg-outer .lg-next {
+    width: 36px;
+    height: 36px;
+  }
+  .lg-outer .lg-prev {
+    left: 8px;
+  }
+  .lg-outer .lg-next {
+    right: 8px;
+  }
+  .lg-outer .lg-counter {
+    margin: 10px 0 0 10px;
+    font-size: 11px;
+  }
 }

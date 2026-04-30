@@ -5,6 +5,7 @@ import {
   buildTransitCacheKey,
   clearCommuteFields,
   formatMinutesText,
+  formatTransitLocation,
   getCachedRoute,
   isCacheFresh,
   normalizeTransitConnection,
@@ -36,6 +37,15 @@ test('buildTransitCacheKey includes arrival policy and normalized addresses', ()
     buildTransitCacheKey('Rue A 1, Suisse', 'Rue B 2, Suisse'),
     'transit:arrival-next-monday-0800:rue a 1, suisse->rue b 2, suisse'
   );
+});
+
+test('formatTransitLocation prefers coordinates when available', () => {
+  assert.equal(
+    formatTransitLocation({ lat: 46.544986724853516, lon: 6.676456451416016 }, 'Hospital CHUV Centre Sylvana (VD) - Epalinges'),
+    '46.544987,6.676456'
+  );
+  assert.equal(formatTransitLocation(null, 'Epalinges, Croisettes'), 'Epalinges, Croisettes');
+  assert.equal(formatTransitLocation({ lat: Number.NaN, lon: 6.67 }, 'Epalinges, Croisettes'), 'Epalinges, Croisettes');
 });
 
 test('buildDriveCacheKey formats coordinates and rejects invalid points', () => {

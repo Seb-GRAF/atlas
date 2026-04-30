@@ -68,6 +68,15 @@ export function buildTransitCacheKey(from, to) {
   return `transit:${TRANSIT_POLICY.cachePolicyKey}:${normalizeAddressKey(from)}->${normalizeAddressKey(to)}`;
 }
 
+export function formatTransitLocation(point, fallbackAddress = '') {
+  const lat = Number(point?.lat);
+  const lon = Number(point?.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    return `${lat.toFixed(6)},${lon.toFixed(6)}`;
+  }
+  return String(fallbackAddress || '').trim();
+}
+
 function formatCoordinatePoint(point) {
   const lat = Number(point?.lat);
   const lon = Number(point?.lon);

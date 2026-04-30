@@ -860,6 +860,10 @@ function buildConfigFromPayload(payload, base = null) {
       maxTotalChf: Number(filters.maxTotalChf) || 1400,
       maxTotalHardChf: Number(filters.maxTotalHardChf) || 1550,
       minRoomsPreferred: Number(filters.minRoomsPreferred) || 2,
+      maxRoomsPreferred:
+        filters.maxRoomsPreferred == null || filters.maxRoomsPreferred === ''
+          ? null
+          : Number(filters.maxRoomsPreferred),
       minSurfaceM2Preferred: Number(filters.minSurfaceM2Preferred) || 0,
       allowMissingSurface: filters.allowMissingSurface !== false,
       excludedObjectTypeKeywords: Array.isArray(filters.excludedObjectTypeKeywords) && filters.excludedObjectTypeKeywords.length

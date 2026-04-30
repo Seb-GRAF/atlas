@@ -29,6 +29,7 @@ export const FiltersSchema = z
     maxTotalChf: z.number().optional(),
     maxTotalHardChf: z.number().optional(),
     minRoomsPreferred: z.number().optional(),
+    maxRoomsPreferred: z.number().nullable().optional(),
     minSurfaceM2Preferred: z.number().optional(),
     allowMissingSurface: z.boolean().optional(),
     maxPublishedAgeDays: z.number().nullable().optional()

@@ -1,0 +1,46 @@
+<h2>How should commute time be calculated?</h2>
+<p class="subtitle">
+  I found that the current code has pieces for geocoding, driving, transit, and route cache,
+  but the scraper clears the commute fields instead of computing them. Before designing the fix,
+  we should choose the commute baseline.
+</p>
+
+<div class="options">
+  <div class="option" data-choice="arrival-0800" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Arrive at work by 08:00</h3>
+      <p>Best for apartment hunting. Stable comparison across listings, useful for public transport schedules.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="depart-0730" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Leave home at 07:30</h3>
+      <p>Also realistic, but less directly tied to a work start time. Public transport results may vary more.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="profile-configurable" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Configurable per profile</h3>
+      <p>Add profile settings for arrival/departure time and day. More flexible, slightly larger implementation.</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Current diagnosis</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:stretch">
+      <div class="placeholder">Listing address</div>
+      <div class="placeholder">Geocode cache</div>
+      <div class="placeholder">Route APIs</div>
+      <div class="placeholder">Dashboard chips</div>
+    </div>
+    <p style="margin:14px 0 0;color:#6f6a5f">
+      The design will make this a real pipeline: listing coordinates + work address -> car and public transport
+      durations -> visible status if calculation fails.
+    </p>
+  </div>
+</div>

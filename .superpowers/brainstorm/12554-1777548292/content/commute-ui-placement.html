@@ -1,0 +1,70 @@
+<h2>Where should commute times appear?</h2>
+<p class="subtitle">
+  Option A is locked: apartment -> work, arrival by 08:00. Now choose how visible the car and public transport
+  times should be in the dashboard.
+</p>
+
+<div class="cards">
+  <div class="card" data-choice="compact-list" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding:16px;background:#f7f3ec;border-radius:10px">
+        <div style="display:grid;grid-template-columns:84px 1fr;gap:12px">
+          <div style="height:84px;background:#d9d2c4;border-radius:8px"></div>
+          <div>
+            <div style="font-size:11px;color:#7c7569;text-transform:uppercase">Vevey · flatfox</div>
+            <div style="margin-top:6px;font-weight:600">3 pièces à Vevey</div>
+            <div style="margin-top:8px;color:#7c7569">3 pces · 72 m² · 🚆 42 min · 🚗 31 min</div>
+            <div style="margin-top:10px;font-family:monospace">1'650 CHF</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Compact in every row</h3>
+      <p>Fast scanning. Shows train and car next to rooms/surface in list and mobile cards.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="detail-emphasis" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding:16px;background:#f7f3ec;border-radius:10px">
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:#d6cec0;border-radius:10px;overflow:hidden">
+          <div style="background:white;padding:12px">
+            <div style="font-size:10px;color:#7c7569;text-transform:uppercase">Public</div>
+            <div style="margin-top:4px;font-family:monospace;font-size:18px">42 min</div>
+            <div style="font-size:11px;color:#7c7569">arrivée 08:00</div>
+          </div>
+          <div style="background:white;padding:12px">
+            <div style="font-size:10px;color:#7c7569;text-transform:uppercase">Voiture</div>
+            <div style="margin-top:4px;font-family:monospace;font-size:18px">31 min</div>
+            <div style="font-size:11px;color:#7c7569">OSRM</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Detailed in side panel</h3>
+      <p>Keeps the list cleaner. The selected apartment shows mode, timing baseline, and failure state.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="both" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="padding:16px;background:#f7f3ec;border-radius:10px">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <span style="padding:5px 8px;background:white;border:1px solid #ddd4c5;border-radius:999px">🚆 42</span>
+          <span style="padding:5px 8px;background:white;border:1px solid #ddd4c5;border-radius:999px">🚗 31</span>
+        </div>
+        <div style="height:86px;background:#e4ded2;border-radius:10px;position:relative">
+          <div style="position:absolute;left:20%;top:58%;width:10px;height:10px;border-radius:99px;background:#222"></div>
+          <div style="position:absolute;right:18%;top:26%;width:10px;height:10px;border-radius:99px;background:#b7472a"></div>
+          <div style="position:absolute;left:25%;right:23%;top:50%;height:2px;background:#887d6f;transform:rotate(-18deg)"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Compact rows + detail context</h3>
+      <p>Best balance: scan in list, understand exact assumptions and degraded states in details.</p>
+    </div>
+  </div>
+</div>

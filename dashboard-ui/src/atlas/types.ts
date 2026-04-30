@@ -67,6 +67,7 @@ export type AtlasListing = {
 
   publishedLabel: string;
   publishedShort: string;
+  publishedTs: number | null;
   transitText: string | null;
   driveText: string | null;
   distanceText: string | null;
@@ -81,6 +82,8 @@ export type AtlasListing = {
 
   lat: number | null;
   lon: number | null;
+  locationPrecision: 'address' | 'area' | null;
+
   images: string[];
 };
 

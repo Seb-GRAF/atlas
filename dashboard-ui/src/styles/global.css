@@ -1,4 +1,75 @@
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+/* ----------------------------------------------------------------------
+ * Atlas V2 design tokens. See design_handoff_atlas_v2/01-design-tokens.md.
+ * Kept side-by-side with legacy Mantine theme tokens during the rollout.
+ * ---------------------------------------------------------------------- */
+:root {
+  /* Surfaces — warm neutrals */
+  --atlas-bg: #f6f3ee;
+  --atlas-paper: #ffffff;
+  --atlas-paper-2: #fbf9f5;
+  --atlas-soft: #efe9e0;
+
+  /* Ink */
+  --atlas-ink: #16140f;
+  --atlas-ink-2: #4a463e;
+  --atlas-ink-3: #8a847a;
+  --atlas-ink-4: #b8b1a4;
+
+  /* Hairlines (not borders) */
+  --atlas-line: #ecdfd4;
+  --atlas-line-2: #f1e7dd;
+
+  /* Single ember accent */
+  --atlas-ember: oklch(58% 0.13 38);
+  --atlas-ember-2: oklch(96% 0.03 60);
+
+  /* Semantic — used at most once each */
+  --atlas-good: oklch(48% 0.10 155);
+  --atlas-bad: oklch(52% 0.14 25);
+  --atlas-info: oklch(50% 0.06 230);
+
+  /* Type */
+  --atlas-sans: 'Geist', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  --atlas-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Aliases used in handoff snippets */
+  --sans: var(--atlas-sans);
+  --mono: var(--atlas-mono);
+
+  /* Radii */
+  --atlas-r-sm: 8px;
+  --atlas-r-md: 12px;
+  --atlas-r-input: 10px;
+  --atlas-r-card: 14px;
+  --atlas-r-lg: 18px;
+  --atlas-r-pill: 999px;
+
+  /* Shadows — warm-tinted */
+  --atlas-shadow-1:
+    0 8px 22px -10px rgba(22, 20, 15, 0.18),
+    0 0 0 1px rgba(22, 20, 15, 0.04);
+  --atlas-shadow-2:
+    0 22px 50px -22px rgba(22, 20, 15, 0.30),
+    0 0 0 1px rgba(22, 20, 15, 0.04);
+  --atlas-shadow-3:
+    0 12px 26px -10px rgba(22, 20, 15, 0.4);
+  --atlas-shadow-pin:
+    0 4px 14px rgba(22, 20, 15, 0.16),
+    0 0 0 1px rgba(22, 20, 15, 0.06);
+  --atlas-shadow-pin-selected:
+    0 8px 24px rgba(22, 20, 15, 0.28),
+    0 0 0 2px #fff;
+
+  /* Glass blur tokens */
+  --atlas-glass-pill-bg: rgba(253, 251, 247, 0.88);
+  --atlas-glass-pill-blur: blur(16px) saturate(160%);
+  --atlas-glass-base-bg: rgba(253, 251, 247, 0.86);
+  --atlas-glass-base-blur: blur(24px) saturate(170%);
+  --atlas-glass-panel-bg: rgba(253, 251, 247, 0.94);
+  --atlas-glass-panel-blur: blur(28px) saturate(170%);
+}
 
 html,
 body,
@@ -10,6 +81,36 @@ body {
   margin: 0;
   background: var(--mantine-color-gray-0);
   color: var(--mantine-color-black);
+}
+
+/* Mono / tabular-nums helpers — required for every price and stat. */
+.atlas-mono,
+[data-atlas-mono] {
+  font-family: var(--atlas-mono);
+}
+
+.atlas-tnum,
+[data-atlas-tnum] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Atlas V2 keyframes */
+@keyframes v2spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes v2pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .listing-row-motion {

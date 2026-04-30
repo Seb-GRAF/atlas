@@ -83,7 +83,15 @@ async function geocodeAddress(query, cache) {
   if (cache[key]) return cache[key];
   
   const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
-  const results = await httpsGet(url);
+  let results;
+  try {
+    results = await httpsGet(url);
+  } catch (err) {
+    console.warn(`WARN geocode failed for "${query}": ${err.message}`);
+    cache[key] = null;
+    return null;
+  }
+
   if (results?.[0]) {
     const point = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
     cache[key] = point;
@@ -265,4 +273,7 @@ async function main() {
   console.log(`\nDone! Updated ${updated}/${tracker.listings.length} listings`);
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err.stack || err.message || String(err));
+  process.exit(1);
+});

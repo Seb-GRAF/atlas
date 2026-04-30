@@ -3036,6 +3036,25 @@ async function main() {
     }
   }
 
+  function clearedCommuteFields() {
+    return {
+      distanceKm: null,
+      distanceText: '',
+      driveMinutes: null,
+      driveText: '',
+      driveRouteStatus: 'missing-address',
+      transitMinutes: null,
+      transitText: '',
+      transitRouteStatus: 'missing-address',
+      transitRouteLabel: 'Arrivée 08:00',
+      transitRouteComputedAt: null,
+      transitRoute: null,
+      commuteWarnings: [],
+      distanceComputed: false,
+      distanceFromWorkAddress: ''
+    };
+  }
+
   for (const old of tracker.listings || []) {
     if (!dedup.has(String(old.id))) {
       // If this listing was explicitly removed by cross-source dedup (enriched data
@@ -3043,6 +3062,7 @@ async function main() {
       if (crossSourceRemovedIds.has(String(old.id))) {
         merged.push({
           ...old,
+          ...clearedCommuteFields(),
           status: normalizeStatus(old.status),
           active: false,
           isRemoved: true,
@@ -3062,6 +3082,7 @@ async function main() {
       if (outOfScopeListing) {
         merged.push({
           ...old,
+          ...clearedCommuteFields(),
           status: normalizeStatus(old.status),
           active: false,
           isRemoved: false,
@@ -3080,6 +3101,7 @@ async function main() {
       if (nonResidentialDirectSource) {
         merged.push({
           ...old,
+          ...clearedCommuteFields(),
           status: normalizeStatus(old.status),
           active: false,
           isRemoved: true,
@@ -3166,6 +3188,7 @@ async function main() {
       if (duplicateOfActive || excludedAnibisSale || anibisSourceDisabled) {
         merged.push({
           ...old,
+          ...clearedCommuteFields(),
           status: normalizeStatus(old.status),
           active: false,
           isRemoved: true,
@@ -3198,22 +3221,7 @@ async function main() {
             distanceComputed: !!old.distanceComputed,
             distanceFromWorkAddress: old.distanceFromWorkAddress || workAddress
           }
-        : {
-            distanceKm: null,
-            distanceText: '',
-            driveMinutes: null,
-            driveText: '',
-            driveRouteStatus: 'missing-address',
-            transitMinutes: null,
-            transitText: '',
-            transitRouteStatus: 'missing-address',
-            transitRouteLabel: 'Arrivée 08:00',
-            transitRouteComputedAt: null,
-            transitRoute: null,
-            commuteWarnings: [],
-            distanceComputed: false,
-            distanceFromWorkAddress: ''
-          };
+        : clearedCommuteFields();
 
       merged.push({
         ...old,

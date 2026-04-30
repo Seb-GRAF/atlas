@@ -12,11 +12,16 @@ import {
   formatCHF
 } from '../components';
 import type { AtlasListingSource, AtlasProfile } from '../types';
+import type { Area } from '../../api/schemas';
+import { GeoAutocompleteField } from './GeoAutocompleteField';
+import { parseGeoAddressResult, parseGeoAreaResult, type GeoAddress } from './geoAutocomplete';
 
 type SettingsDrawerProps = {
   profile: AtlasProfile;
   onClose: () => void;
   onSave: (next: AtlasProfile) => void;
+  saving?: boolean;
+  error?: string | null;
 };
 
 const SOURCES: AtlasListingSource[] = [
@@ -93,19 +98,9 @@ const chipRemoveStyle: CSSProperties = {
   cursor: 'pointer'
 };
 
-const addChipStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 5,
-  padding: '5px 10px',
-  borderRadius: 999,
-  background: 'transparent',
-  boxShadow: 'inset 0 0 0 1px var(--atlas-line)',
-  fontFamily: 'var(--atlas-sans)',
-  fontSize: 12.5,
-  color: 'var(--atlas-ink-2)',
-  border: 0,
-  cursor: 'pointer'
+const addZoneStyle: CSSProperties = {
+  flex: '1 1 180px',
+  minWidth: 180
 };
 
 const budgetCardStyle: CSSProperties = {
@@ -123,6 +118,14 @@ const budgetEyebrowStyle: CSSProperties = {
   textTransform: 'uppercase'
 };
 
+const errorStyle: CSSProperties = {
+  fontFamily: 'var(--atlas-sans)',
+  fontSize: 12,
+  lineHeight: 1.4,
+  color: 'var(--atlas-bad)',
+  marginRight: 'auto'
+};
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
@@ -132,11 +135,41 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-export function SettingsDrawer({ profile, onClose, onSave }: SettingsDrawerProps) {
+export function SettingsDrawer({ profile, onClose, onSave, saving, error }: SettingsDrawerProps) {
   const [draft, setDraft] = useState<AtlasProfile>(profile);
+  const [zoneQuery, setZoneQuery] = useState('');
 
   const removeZone = (zone: string) => {
-    setDraft((d) => ({ ...d, zones: d.zones.filter((z) => z !== zone) }));
+    setDraft((d) => {
+      const areas = d.areas.filter((area) => area.label !== zone);
+      return { ...d, areas, zones: areas.map((area) => area.label) };
+    });
+  };
+
+  const addZone = (area: Area) => {
+    setDraft((d) => {
+      const exists = d.areas.some((item) => item.slug === area.slug || item.label === area.label);
+      const areas = exists ? d.areas : [...d.areas, area];
+      return { ...d, areas, zones: areas.map((item) => item.label) };
+    });
+    setZoneQuery('');
+  };
+
+  const setWorkplaceValue = (value: string) => {
+    setDraft((d) => ({
+      ...d,
+      workplace: value.trim() ? value : null,
+      workplaceCoords: null
+    }));
+  };
+
+  const selectWorkplace = (address: GeoAddress) => {
+    setDraft((d) => ({
+      ...d,
+      workplace: address.label,
+      workplaceCoords:
+        address.lat != null && address.lon != null ? { lat: address.lat, lon: address.lon } : d.workplaceCoords
+    }));
   };
 
   const toggleSource = (source: AtlasListingSource, next: boolean) => {
@@ -148,12 +181,11 @@ export function SettingsDrawer({ profile, onClose, onSave }: SettingsDrawerProps
 
   const isSourceOn = (source: AtlasListingSource): boolean => {
     const entry = draft.enabledSources[source];
-    return entry !== false; // default-on if undefined
+    return entry !== false;
   };
 
   return (
     <GlassPanel variant="panel" style={drawerStyle}>
-      {/* Header */}
       <div
         style={{
           display: 'flex',
@@ -172,7 +204,6 @@ export function SettingsDrawer({ profile, onClose, onSave }: SettingsDrawerProps
       </div>
       <Hairline />
 
-      {/* Body */}
       <div
         style={{
           flex: 1,
@@ -191,44 +222,43 @@ export function SettingsDrawer({ profile, onClose, onSave }: SettingsDrawerProps
         </Field>
 
         <Field label="Lieu de travail">
-          <div
-            style={{
-              padding: '10px 12px',
-              borderRadius: 10,
-              background: 'var(--atlas-paper)',
-              boxShadow: 'inset 0 0 0 1px var(--atlas-line)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontFamily: 'var(--atlas-sans)',
-              fontSize: 13.5,
-              color: 'var(--atlas-ink)'
-            }}
-          >
-            <Icons.Compass size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
-            <span>{draft.workplace ?? '—'}</span>
-          </div>
+          <GeoAutocompleteField<GeoAddress>
+            ariaLabel="Lieu de travail"
+            value={draft.workplace ?? ''}
+            placeholder="Adresse ou lieu"
+            minChars={3}
+            parseResult={parseGeoAddressResult}
+            onValueChange={setWorkplaceValue}
+            onSelect={selectWorkplace}
+          />
         </Field>
 
         <Field label="Zones surveillées">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {draft.zones.map((zone) => (
-              <span key={zone} style={chipStyle}>
-                {zone}
+            {draft.areas.map((area) => (
+              <span key={area.slug || area.label} style={chipStyle}>
+                {area.label}
                 <button
                   type="button"
-                  onClick={() => removeZone(zone)}
+                  onClick={() => removeZone(area.label)}
                   style={chipRemoveStyle}
-                  aria-label={`Retirer ${zone}`}
+                  aria-label={`Retirer ${area.label}`}
                 >
                   <Icons.Close size={10} stroke={2} />
                 </button>
               </span>
             ))}
-            <button type="button" style={addChipStyle}>
-              <Icons.Plus size={12} stroke={1.8} />
-              Ajouter
-            </button>
+            <div style={addZoneStyle}>
+              <GeoAutocompleteField<Area>
+                ariaLabel="Ajouter une zone"
+                value={zoneQuery}
+                placeholder="Ajouter une zone"
+                origins="gg25"
+                parseResult={parseGeoAreaResult}
+                onValueChange={setZoneQuery}
+                onSelect={addZone}
+              />
+            </div>
           </div>
         </Field>
 
@@ -290,20 +320,26 @@ export function SettingsDrawer({ profile, onClose, onSave }: SettingsDrawerProps
       </div>
 
       <Hairline />
-      {/* Footer */}
       <div
         style={{
           padding: '12px 20px',
           display: 'flex',
+          alignItems: 'center',
           justifyContent: 'flex-end',
           gap: 8
         }}
       >
+        {error ? <div style={errorStyle}>{error}</div> : null}
         <AtlasButton variant="ghost" onClick={onClose} style={{ background: 'transparent', color: 'var(--atlas-ink-2)' }}>
           Annuler
         </AtlasButton>
-        <AtlasButton variant="primary" onClick={() => onSave(draft)}>
-          Enregistrer
+        <AtlasButton
+          variant="primary"
+          onClick={() => onSave(draft)}
+          disabled={saving}
+          style={saving ? { opacity: 0.6, cursor: 'wait' } : undefined}
+        >
+          {saving ? 'Enregistrement…' : 'Enregistrer'}
         </AtlasButton>
       </div>
     </GlassPanel>

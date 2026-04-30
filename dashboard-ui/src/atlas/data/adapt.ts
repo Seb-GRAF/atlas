@@ -234,7 +234,8 @@ function relativeFr(iso: string): string {
 
 export function adaptProfile(detail: ProfileDetail | null, state: DashboardState | null): AtlasProfile {
   const slug = detail?.slug ?? state?.profile ?? 'default';
-  const zones = detail?.areas?.map((a) => a.label) ?? [];
+  const areas = detail?.areas ?? [];
+  const zones = areas.map((a) => a.label);
   const workplaceAddress = detail?.preferences?.workplaceAddress ?? null;
   const workplaceCoords = state?.map?.workplace
     ? { lat: state.map.workplace.lat, lon: state.map.workplace.lon }
@@ -252,16 +253,22 @@ export function adaptProfile(detail: ProfileDetail | null, state: DashboardState
   const generatedRaw = state?.latest?.generatedAt ?? null;
   const generatedLabel = generatedRaw ? relativeFr(generatedRaw) : '';
 
+  const roomsMaxRaw = detail?.filters?.maxRoomsPreferred;
+
   return {
     slug,
     shortTitle: detail?.shortTitle ?? state?.profile ?? 'Atlas',
+    areas,
     zones,
     workplace: workplaceAddress,
     workplaceCoords,
     newCount: state?.latest?.newCount ?? 0,
     generatedAt: generatedLabel,
+    budgetMinChf: detail?.filters?.minTotalChf ?? null,
     budgetMaxChf: detail?.filters?.maxTotalChf ?? null,
     budgetCeilingChf: detail?.filters?.maxTotalHardChf ?? null,
+    roomsMin: detail?.filters?.minRoomsPreferred ?? null,
+    roomsMax: typeof roomsMaxRaw === 'number' ? roomsMaxRaw : null,
     enabledSources: enabled
   };
 }

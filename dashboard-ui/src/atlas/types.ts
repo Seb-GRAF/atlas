@@ -1,3 +1,5 @@
+import type { Area } from '../api/schemas';
+
 export type AtlasListingStatus =
   | 'À trier'
   | 'À contacter'
@@ -79,20 +81,23 @@ export type AtlasListing = {
 
   lat: number | null;
   lon: number | null;
-
   images: string[];
 };
 
 export type AtlasProfile = {
   slug: string;
   shortTitle: string;
+  areas: Area[];
   zones: string[];
   workplace: string | null;
   workplaceCoords: { lat: number; lon: number } | null;
   newCount: number;
   generatedAt: string;
+  budgetMinChf: number | null;
   budgetMaxChf: number | null;
   budgetCeilingChf: number | null;
+  roomsMin: number | null;
+  roomsMax: number | null;
   enabledSources: Partial<Record<AtlasListingSource, boolean>>;
 };
 

@@ -68,7 +68,7 @@ export function AtlasShell() {
 
 function DesktopShell() {
   const { listings, profile, isLoading, error } = useAtlasState();
-  const { setStatus, togglePin, dismiss } = useAtlasMutations();
+  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations();
   const [urlState, updateUrl] = useAtlasUrlState();
   const { scan, start: startScan, cancel: cancelScan } = useScan();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -235,9 +235,12 @@ function DesktopShell() {
           <SettingsDrawer
             profile={profile}
             onClose={() => setSettingsOpen(false)}
-            onSave={() => {
-              // Profile mutations land in a follow-up phase; close for now.
-              setSettingsOpen(false);
+            saving={saveProfile.isPending}
+            error={saveProfile.error ? (saveProfile.error as Error).message : null}
+            onSave={(next) => {
+              saveProfile.mutate(next, {
+                onSuccess: () => setSettingsOpen(false)
+              });
             }}
           />
         </>

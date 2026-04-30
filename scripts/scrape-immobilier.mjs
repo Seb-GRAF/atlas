@@ -2980,20 +2980,7 @@ async function main() {
         ...item,
         pinned: !!existing.pinned,
         entryDateText,
-        distanceKm: item.distanceComputed ? item.distanceKm : null,
-        distanceText: item.distanceComputed ? item.distanceText || '' : '',
-        driveMinutes: toDurationMinutesOrNull(item.driveMinutes),
-        driveText: formatMinutesText(item.driveMinutes),
-        driveRouteStatus: item.driveRouteStatus || 'missing-address',
-        transitMinutes: toDurationMinutesOrNull(item.transitMinutes),
-        transitText: formatMinutesText(item.transitMinutes),
-        transitRouteStatus: item.transitRouteStatus || 'missing-address',
-        transitRouteLabel: item.transitRouteLabel || 'Arrivée 08:00',
-        transitRouteComputedAt: item.transitRouteComputedAt || null,
-        transitRoute: item.transitRoute || null,
-        commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
-        distanceComputed: !!item.distanceComputed,
-        distanceFromWorkAddress: item.distanceFromWorkAddress || workAddress,
+        ...projectCommuteFields(item, { visible: item.display !== false, workAddress }),
         publishedAt: item.publishedAt || existing.publishedAt || null,
         status: normalizeStatus(existing.status || 'À trier'),
         notes: mergeNotesWithEntryDate(existing.notes || '', entryDateText),
@@ -3009,20 +2996,7 @@ async function main() {
       merged.push({
         ...item,
         entryDateText,
-        distanceKm: item.distanceComputed ? item.distanceKm : null,
-        distanceText: item.distanceComputed ? item.distanceText || '' : '',
-        driveMinutes: toDurationMinutesOrNull(item.driveMinutes),
-        driveText: formatMinutesText(item.driveMinutes),
-        driveRouteStatus: item.driveRouteStatus || 'missing-address',
-        transitMinutes: toDurationMinutesOrNull(item.transitMinutes),
-        transitText: formatMinutesText(item.transitMinutes),
-        transitRouteStatus: item.transitRouteStatus || 'missing-address',
-        transitRouteLabel: item.transitRouteLabel || 'Arrivée 08:00',
-        transitRouteComputedAt: item.transitRouteComputedAt || null,
-        transitRoute: item.transitRoute || null,
-        commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
-        distanceComputed: !!item.distanceComputed,
-        distanceFromWorkAddress: item.distanceFromWorkAddress || workAddress,
+        ...projectCommuteFields(item, { visible: item.display !== false, workAddress }),
         publishedAt: item.publishedAt || null,
         status: 'À trier',
         notes: mergeNotesWithEntryDate('', entryDateText),
@@ -3052,6 +3026,27 @@ async function main() {
       commuteWarnings: [],
       distanceComputed: false,
       distanceFromWorkAddress: ''
+    };
+  }
+
+  function projectCommuteFields(source, { visible, workAddress: fallbackWorkAddress }) {
+    if (!visible) return clearedCommuteFields();
+
+    return {
+      distanceKm: source.distanceComputed ? source.distanceKm : null,
+      distanceText: source.distanceComputed ? source.distanceText || '' : '',
+      driveMinutes: toDurationMinutesOrNull(source.driveMinutes),
+      driveText: formatMinutesText(source.driveMinutes),
+      driveRouteStatus: source.driveRouteStatus || 'missing-address',
+      transitMinutes: toDurationMinutesOrNull(source.transitMinutes),
+      transitText: formatMinutesText(source.transitMinutes),
+      transitRouteStatus: source.transitRouteStatus || 'missing-address',
+      transitRouteLabel: source.transitRouteLabel || 'Arrivée 08:00',
+      transitRouteComputedAt: source.transitRouteComputedAt || null,
+      transitRoute: source.transitRoute || null,
+      commuteWarnings: Array.isArray(source.commuteWarnings) ? source.commuteWarnings : [],
+      distanceComputed: !!source.distanceComputed,
+      distanceFromWorkAddress: source.distanceFromWorkAddress || fallbackWorkAddress
     };
   }
 
@@ -3203,25 +3198,10 @@ async function main() {
         continue;
       }
 
-      const retainsVisibleCommute = !shouldRemove && refreshed.display !== false;
-      const commuteFields = retainsVisibleCommute
-        ? {
-            distanceKm: old.distanceComputed ? old.distanceKm : null,
-            distanceText: old.distanceComputed ? old.distanceText || '' : '',
-            driveMinutes: toDurationMinutesOrNull(old.driveMinutes),
-            driveText: formatMinutesText(old.driveMinutes),
-            driveRouteStatus: old.driveRouteStatus || 'missing-address',
-            transitMinutes: toDurationMinutesOrNull(old.transitMinutes),
-            transitText: formatMinutesText(old.transitMinutes),
-            transitRouteStatus: old.transitRouteStatus || 'missing-address',
-            transitRouteLabel: old.transitRouteLabel || 'Arrivée 08:00',
-            transitRouteComputedAt: old.transitRouteComputedAt || null,
-            transitRoute: old.transitRoute || null,
-            commuteWarnings: Array.isArray(old.commuteWarnings) ? old.commuteWarnings : [],
-            distanceComputed: !!old.distanceComputed,
-            distanceFromWorkAddress: old.distanceFromWorkAddress || workAddress
-          }
-        : clearedCommuteFields();
+      const commuteFields = projectCommuteFields(old, {
+        visible: !shouldRemove && refreshed.display !== false,
+        workAddress
+      });
 
       merged.push({
         ...old,

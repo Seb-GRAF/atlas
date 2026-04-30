@@ -16,6 +16,7 @@ import {
   setCommuteFailureFields,
   setCommuteSuccessFields
 } from './lib/commute.mjs';
+import { geocodeAddress as geocodeSwissAddress } from './lib/geocode.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,26 +92,7 @@ function httpsGet(url) {
 }
 
 async function geocodeAddress(query, cache) {
-  const key = query.toLowerCase().trim();
-  if (cache[key]) return cache[key];
-  
-  const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
-  let results;
-  try {
-    results = await httpsGet(url);
-  } catch (err) {
-    console.warn(`WARN geocode failed for "${query}": ${err.message}`);
-    cache[key] = null;
-    return null;
-  }
-
-  if (results?.[0]) {
-    const point = { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
-    cache[key] = point;
-    return point;
-  }
-  cache[key] = null;
-  return null;
+  return geocodeSwissAddress(query, cache, { fetchJson: httpsGet });
 }
 
 function haversineKm(lat1, lon1, lat2, lon2) {

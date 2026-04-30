@@ -19,6 +19,7 @@ import {
   setCommuteSuccessFields,
   toDurationMinutesOrNull
 } from './lib/commute.mjs';
+import { geocodeAddress as geocodeSwissAddress } from './lib/geocode.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -785,64 +786,8 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
   }
 }
 
-let lastGeocodeRequestAt = 0;
-
 async function geocodeAddress(query, geocodeCache) {
-  if (!query) return null;
-
-  const key = query.toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(geocodeCache, key)) {
-    const cached = geocodeCache[key];
-    if (cached && typeof cached === 'object' && Number.isFinite(Number(cached.lat)) && Number.isFinite(Number(cached.lon))) {
-      return { lat: Number(cached.lat), lon: Number(cached.lon) };
-    }
-  }
-
-  const parseLatLon = (latValue, lonValue) => {
-    const lat = Number(latValue);
-    const lon = Number(lonValue);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    return { lat, lon };
-  };
-
-  const elapsed = Date.now() - lastGeocodeRequestAt;
-  if (elapsed < 1100) {
-    await sleep(1100 - elapsed);
-  }
-
-  try {
-    const payload = await fetchJson(
-      `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`
-    );
-    lastGeocodeRequestAt = Date.now();
-
-    if (Array.isArray(payload) && payload.length) {
-      const point = parseLatLon(payload[0]?.lat, payload[0]?.lon);
-      if (point) {
-        geocodeCache[key] = point;
-        return point;
-      }
-    }
-  } catch {
-    // fallback below
-  }
-
-  try {
-    const photon = await fetchJson(
-      `https://photon.komoot.io/api/?limit=1&q=${encodeURIComponent(query)}`
-    );
-
-    const coords = photon?.features?.[0]?.geometry?.coordinates;
-    const point = Array.isArray(coords) ? parseLatLon(coords[1], coords[0]) : null;
-    if (point) {
-      geocodeCache[key] = point;
-      return point;
-    }
-
-    return null;
-  } catch {
-    return undefined;
-  }
+  return geocodeSwissAddress(query, geocodeCache, { fetchJson, sleep });
 }
 
 async function computeDistanceFromWork(item, workCoords, geocodeCache) {

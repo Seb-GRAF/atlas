@@ -14,7 +14,8 @@ import {
   resolveTransitReference,
   setCachedRoute,
   setCommuteFailureFields,
-  setCommuteSuccessFields
+  setCommuteSuccessFields,
+  shouldRecomputeListingCommute
 } from './lib/commute.mjs';
 import { geocodeAddress as geocodeSwissAddress } from './lib/geocode.mjs';
 
@@ -194,13 +195,19 @@ async function main() {
   const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
   
   const workAddress = config.preferences?.workplaceAddress || config.preferences?.workAddress || DEFAULT_WORK_ADDRESS;
+  const listings = Array.isArray(tracker.listings) ? tracker.listings : [];
+  const commuteListings = listings.filter(shouldRecomputeListingCommute);
+  const skippedClosed = listings.length - commuteListings.length;
   console.log(`Workplace: ${workAddress}`);
   console.log(`Commute direction: Apartment -> Work (Monday arrival 8h)`);
+  if (skippedClosed > 0) {
+    console.log(`Skipping ${skippedClosed} closed or removed listings`);
+  }
   
   const workCoords = await geocodeAddress(workAddress, geocodeCache);
   if (!workCoords) {
     console.error('Could not geocode workplace address');
-    for (const listing of tracker.listings) {
+    for (const listing of commuteListings) {
       clearCommuteFields(listing);
       setCommuteFailureFields(listing, 'geocode-failed', 'Trajet indisponible: adresse de travail non géocodée.');
       listing.distanceFromWorkAddress = workAddress || '';
@@ -208,14 +215,14 @@ async function main() {
     await writeJson(TRACKER_PATH, tracker);
     await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
     await writeJson(ROUTE_CACHE_PATH, routeCache);
-    console.log(`Marked ${tracker.listings.length} listings with workplace geocode failure`);
+    console.log(`Marked ${commuteListings.length} active listings with workplace geocode failure`);
     process.exitCode = 1;
     return;
   }
   console.log(`Work coords: ${workCoords.lat}, ${workCoords.lon}`);
   
   let updated = 0;
-  for (const listing of tracker.listings) {
+  for (const listing of commuteListings) {
     const listingAddress = buildListingAddressQuery(listing);
     if (!listingAddress) {
       clearCommuteFields(listing);
@@ -265,7 +272,7 @@ async function main() {
   await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
   await writeJson(ROUTE_CACHE_PATH, routeCache);
   
-  console.log(`\nDone! Updated ${updated}/${tracker.listings.length} listings`);
+  console.log(`\nDone! Updated ${updated}/${commuteListings.length} active listings`);
 }
 
 main().catch((err) => {

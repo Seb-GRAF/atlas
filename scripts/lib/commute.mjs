@@ -299,3 +299,10 @@ export function setCommuteSuccessFields(item, result) {
   item.transitRoute = result.transitRoute || null;
   item.commuteWarnings = [];
 }
+
+export const CLOSED_COMMUTE_STATUSES = new Set(['Accepté', 'Écartée', 'Refus régie']);
+
+export function shouldRecomputeListingCommute(listing) {
+  if (!listing || listing.isRemoved) return false;
+  return !CLOSED_COMMUTE_STATUSES.has(String(listing.status || '').trim());
+}

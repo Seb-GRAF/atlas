@@ -13,7 +13,8 @@ import {
   projectRetainedCommuteFields,
   setCachedRoute,
   setCommuteFailureFields,
-  setCommuteSuccessFields
+  setCommuteSuccessFields,
+  shouldRecomputeListingCommute
 } from './commute.mjs';
 
 test('parseTransportDurationToMinutes parses Swiss transport durations', () => {
@@ -318,4 +319,19 @@ test('formatMinutesText only formats finite positive minutes', () => {
   assert.equal(formatMinutesText(31), '31 min');
   assert.equal(formatMinutesText(0), '');
   assert.equal(formatMinutesText(null), '');
+});
+
+test('shouldRecomputeListingCommute only includes active or triage listings', () => {
+  assert.equal(shouldRecomputeListingCommute({ status: 'À trier' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'À contacter' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Contacté' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Visite prévue' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Dossier à envoyer' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Dossier envoyé' }), true);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Relance à faire' }), true);
+
+  assert.equal(shouldRecomputeListingCommute({ status: 'Accepté' }), false);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Écartée' }), false);
+  assert.equal(shouldRecomputeListingCommute({ status: 'Refus régie' }), false);
+  assert.equal(shouldRecomputeListingCommute({ status: 'À trier', isRemoved: true }), false);
 });

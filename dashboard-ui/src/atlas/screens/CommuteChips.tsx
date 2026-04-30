@@ -21,7 +21,18 @@ const chipStyle: CSSProperties = {
   background: 'var(--atlas-paper-2)',
   color: 'var(--atlas-ink)',
   boxShadow: '0 0 0 1px var(--atlas-line)',
-  whiteSpace: 'nowrap'
+  whiteSpace: 'nowrap',
+  maxWidth: '100%'
+};
+
+const iconStyle: CSSProperties = {
+  flexShrink: 0
+};
+
+const statusStyle: CSSProperties = {
+  flexShrink: 0,
+  color: 'currentColor',
+  opacity: 0.75
 };
 
 function chipTone(status: string | null | undefined, hasText: boolean): CSSProperties {
@@ -32,9 +43,36 @@ function chipTone(status: string | null | undefined, hasText: boolean): CSSPrope
   return {};
 }
 
+function statusCue(status: string | null | undefined): { suffix: string; label: string } | null {
+  if (!status || status === 'ok') return null;
+  if (status === 'cached-stale') {
+    return { suffix: 'cache', label: 'donnée issue du cache' };
+  }
+  if (status === 'route-failed') {
+    return { suffix: 'indispo', label: 'trajet indisponible' };
+  }
+  if (status === 'missing-address') {
+    return { suffix: 'adresse', label: 'adresse manquante' };
+  }
+  if (status === 'geocode-failed') {
+    return { suffix: 'géocode', label: 'adresse non géocodée' };
+  }
+  return { suffix: 'statut', label: `statut ${status}` };
+}
+
 export function CommuteChips({ listing, compact = false, style }: CommuteChipsProps) {
   const transitValue = listing.transitText || 'n/a';
   const driveValue = listing.driveText || 'n/a';
+  const transitStatus = statusCue(listing.transitRouteStatus);
+  const driveStatus = statusCue(listing.driveRouteStatus);
+  const valueStyle: CSSProperties = {
+    fontSize: compact ? 11 : 12,
+    fontWeight: 500,
+    minWidth: 0,
+    maxWidth: compact ? 88 : 108,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  };
 
   return (
     <div
@@ -47,13 +85,23 @@ export function CommuteChips({ listing, compact = false, style }: CommuteChipsPr
         ...style
       }}
     >
-      <span style={{ ...chipStyle, ...chipTone(listing.transitRouteStatus, !!listing.transitText) }}>
-        <Icons.Train size={compact ? 11 : 12} stroke={1.8} />
-        <Mono style={{ fontSize: compact ? 11 : 12, fontWeight: 500 }}>PT {transitValue}</Mono>
+      <span
+        title={`PT ${transitValue}${transitStatus ? `, ${transitStatus.label}` : ''}`}
+        aria-label={`transport public ${transitValue}${transitStatus ? `, ${transitStatus.label}` : ''}`}
+        style={{ ...chipStyle, ...chipTone(listing.transitRouteStatus, !!listing.transitText) }}
+      >
+        <Icons.Train size={compact ? 11 : 12} stroke={1.8} style={iconStyle} />
+        <Mono style={valueStyle}>PT {transitValue}</Mono>
+        {transitStatus ? <Mono style={{ ...valueStyle, ...statusStyle }}>{transitStatus.suffix}</Mono> : null}
       </span>
-      <span style={{ ...chipStyle, ...chipTone(listing.driveRouteStatus, !!listing.driveText) }}>
-        <Icons.Drive size={compact ? 11 : 12} stroke={1.8} />
-        <Mono style={{ fontSize: compact ? 11 : 12, fontWeight: 500 }}>CAR {driveValue}</Mono>
+      <span
+        title={`CAR ${driveValue}${driveStatus ? `, ${driveStatus.label}` : ''}`}
+        aria-label={`voiture ${driveValue}${driveStatus ? `, ${driveStatus.label}` : ''}`}
+        style={{ ...chipStyle, ...chipTone(listing.driveRouteStatus, !!listing.driveText) }}
+      >
+        <Icons.Drive size={compact ? 11 : 12} stroke={1.8} style={iconStyle} />
+        <Mono style={valueStyle}>CAR {driveValue}</Mono>
+        {driveStatus ? <Mono style={{ ...valueStyle, ...statusStyle }}>{driveStatus.suffix}</Mono> : null}
       </span>
     </div>
   );

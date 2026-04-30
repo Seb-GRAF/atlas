@@ -18,6 +18,7 @@ import {
   formatCHF
 } from '../../components';
 import { StatGrid } from '../StatGrid';
+import { CommuteTimeline } from '../CommuteTimeline';
 import type { AtlasListing, AtlasListingStatus } from '../../types';
 
 type MobileDetailSheetProps = {
@@ -250,6 +251,8 @@ export function MobileDetailSheet({
             surfaceM2={listing.surfaceM2}
             driveText={listing.driveText}
           />
+
+          <CommuteTimeline listing={listing} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <SourceMono source={listing.source} />

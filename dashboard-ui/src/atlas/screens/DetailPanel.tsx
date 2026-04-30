@@ -14,6 +14,7 @@ import {
   formatCHF
 } from '../components';
 import { StatGrid } from './StatGrid';
+import { CommuteTimeline } from './CommuteTimeline';
 import type { AtlasListing, AtlasListingStatus } from '../types';
 import { useState, useEffect } from 'react';
 
@@ -148,6 +149,8 @@ export function DetailPanel({
           surfaceM2={listing.surfaceM2}
           driveText={listing.driveText}
         />
+
+        <CommuteTimeline listing={listing} />
 
         <Hairline />
 

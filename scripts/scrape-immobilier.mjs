@@ -12,6 +12,7 @@ import {
   getCachedRoute,
   normalizeTransitConnection,
   parseTransportDurationToMinutes,
+  projectRetainedCommuteFields,
   resolveTransitReference,
   setCachedRoute,
   setCommuteFailureFields,
@@ -3198,9 +3199,10 @@ async function main() {
         continue;
       }
 
-      const commuteFields = projectCommuteFields(old, {
+      const commuteFields = projectRetainedCommuteFields(old, {
         visible: !shouldRemove && refreshed.display !== false,
-        workAddress
+        workAddress,
+        workCoords
       });
 
       merged.push({

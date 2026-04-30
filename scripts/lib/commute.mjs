@@ -207,6 +207,12 @@ export function clearCommuteFields(item) {
   item.commuteWarnings = [];
 }
 
+export function clearedCommuteFields() {
+  const item = {};
+  clearCommuteFields(item);
+  return item;
+}
+
 export function setCommuteFailureFields(item, status, message) {
   item.driveMinutes = null;
   item.driveText = '';
@@ -218,6 +224,57 @@ export function setCommuteFailureFields(item, status, message) {
   item.transitMinutes = null;
   item.transitText = '';
   item.commuteWarnings = message ? [message] : [];
+}
+
+function projectCommuteFields(source, { visible, workAddress: fallbackWorkAddress }) {
+  if (!visible) return clearedCommuteFields();
+
+  return {
+    distanceKm: source.distanceComputed ? source.distanceKm : null,
+    distanceText: source.distanceComputed ? source.distanceText || '' : '',
+    driveMinutes: toDurationMinutesOrNull(source.driveMinutes),
+    driveText: formatMinutesText(source.driveMinutes),
+    driveRouteStatus: source.driveRouteStatus || 'missing-address',
+    transitMinutes: toDurationMinutesOrNull(source.transitMinutes),
+    transitText: formatMinutesText(source.transitMinutes),
+    transitRouteStatus: source.transitRouteStatus || 'missing-address',
+    transitRouteLabel: source.transitRouteLabel || TRANSIT_POLICY.label,
+    transitRouteComputedAt: source.transitRouteComputedAt || null,
+    transitRoute: source.transitRoute || null,
+    commuteWarnings: Array.isArray(source.commuteWarnings) ? source.commuteWarnings : [],
+    distanceComputed: !!source.distanceComputed,
+    distanceFromWorkAddress: source.distanceFromWorkAddress || fallbackWorkAddress
+  };
+}
+
+function failureCommuteFields(status, message, workAddress) {
+  const item = clearedCommuteFields();
+  setCommuteFailureFields(item, status, message);
+  item.distanceFromWorkAddress = workAddress || '';
+  return item;
+}
+
+export function projectRetainedCommuteFields(source, { visible, workAddress, workCoords }) {
+  if (!visible) return clearedCommuteFields();
+
+  if (!workCoords) {
+    return failureCommuteFields(
+      'geocode-failed',
+      `Trajet indisponible: adresse de travail non géocodée (${workAddress || 'adresse manquante'}).`,
+      workAddress
+    );
+  }
+
+  const storedWorkAddress = source.distanceFromWorkAddress || '';
+  if (normalizeAddressKey(storedWorkAddress) !== normalizeAddressKey(workAddress)) {
+    return failureCommuteFields(
+      'route-failed',
+      "Trajet à recalculer pour l'adresse de travail actuelle.",
+      workAddress
+    );
+  }
+
+  return projectCommuteFields(source, { visible, workAddress });
 }
 
 export function setCommuteSuccessFields(item, result) {

@@ -10,6 +10,7 @@ import {
   normalizeTransitConnection,
   parseTransportDurationToMinutes,
   resolveNextMondayDateIso,
+  projectRetainedCommuteFields,
   setCachedRoute,
   setCommuteFailureFields,
   setCommuteSuccessFields
@@ -230,6 +231,87 @@ test('setCommuteFailureFields is visible and clearCommuteFields resets old value
   assert.equal(listing.driveText, '');
   assert.equal(listing.transitText, '');
   assert.equal(listing.transitRouteStatus, 'missing-address');
+});
+
+test('projectRetainedCommuteFields clears stale retained commute when workplace geocode fails', () => {
+  const fields = projectRetainedCommuteFields({
+    distanceKm: 12.4,
+    distanceText: '12.4 km',
+    distanceComputed: true,
+    distanceFromWorkAddress: 'Ancienne adresse',
+    driveMinutes: 31,
+    driveText: '31 min',
+    driveRouteStatus: 'ok',
+    transitMinutes: 42,
+    transitText: '42 min',
+    transitRouteStatus: 'ok',
+    commuteWarnings: []
+  }, {
+    visible: true,
+    workAddress: 'Rue Etraz 4, Lausanne',
+    workCoords: null
+  });
+
+  assert.equal(fields.distanceComputed, false);
+  assert.equal(fields.distanceKm, null);
+  assert.equal(fields.distanceText, '');
+  assert.equal(fields.distanceFromWorkAddress, 'Rue Etraz 4, Lausanne');
+  assert.equal(fields.driveMinutes, null);
+  assert.equal(fields.driveRouteStatus, 'geocode-failed');
+  assert.equal(fields.transitRouteStatus, 'geocode-failed');
+  assert.match(fields.commuteWarnings[0], /Rue Etraz 4, Lausanne/);
+});
+
+test('projectRetainedCommuteFields marks retained commute for recompute when workplace changes', () => {
+  const fields = projectRetainedCommuteFields({
+    distanceKm: 12.4,
+    distanceText: '12.4 km',
+    distanceComputed: true,
+    distanceFromWorkAddress: 'Ancienne adresse',
+    driveMinutes: 31,
+    driveText: '31 min',
+    driveRouteStatus: 'ok',
+    transitMinutes: 42,
+    transitText: '42 min',
+    transitRouteStatus: 'ok',
+    commuteWarnings: []
+  }, {
+    visible: true,
+    workAddress: 'Rue Etraz 4, Lausanne',
+    workCoords: { lat: 46.5218, lon: 6.6336 }
+  });
+
+  assert.equal(fields.distanceComputed, false);
+  assert.equal(fields.distanceKm, null);
+  assert.equal(fields.distanceText, '');
+  assert.equal(fields.distanceFromWorkAddress, 'Rue Etraz 4, Lausanne');
+  assert.equal(fields.driveMinutes, null);
+  assert.equal(fields.driveRouteStatus, 'route-failed');
+  assert.equal(fields.transitRouteStatus, 'route-failed');
+  assert.deepEqual(fields.commuteWarnings, ["Trajet à recalculer pour l'adresse de travail actuelle."]);
+});
+
+test('projectRetainedCommuteFields preserves retained commute when workplace matches', () => {
+  const fields = projectRetainedCommuteFields({
+    distanceKm: 12.4,
+    distanceText: '12.4 km',
+    distanceComputed: true,
+    distanceFromWorkAddress: 'Rue Etraz 4, Lausanne',
+    driveMinutes: 31,
+    driveRouteStatus: 'ok',
+    transitMinutes: 42,
+    transitRouteStatus: 'ok'
+  }, {
+    visible: true,
+    workAddress: 'Rue Etraz 4, Lausanne',
+    workCoords: { lat: 46.5218, lon: 6.6336 }
+  });
+
+  assert.equal(fields.distanceComputed, true);
+  assert.equal(fields.distanceKm, 12.4);
+  assert.equal(fields.driveText, '31 min');
+  assert.equal(fields.transitText, '42 min');
+  assert.equal(fields.distanceFromWorkAddress, 'Rue Etraz 4, Lausanne');
 });
 
 test('formatMinutesText only formats finite positive minutes', () => {

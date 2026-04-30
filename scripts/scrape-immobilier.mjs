@@ -4,6 +4,20 @@ import path from 'node:path';
 import https from 'node:https';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import {
+  buildDriveCacheKey,
+  buildTransitCacheKey,
+  clearCommuteFields,
+  formatMinutesText,
+  getCachedRoute,
+  normalizeTransitConnection,
+  parseTransportDurationToMinutes,
+  resolveTransitReference,
+  setCachedRoute,
+  setCommuteFailureFields,
+  setCommuteSuccessFields,
+  toDurationMinutesOrNull
+} from './lib/commute.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -351,11 +365,6 @@ function toPositiveNumber(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function toDurationMinutesOrNull(value) {
-  const n = toNumberOrNull(value);
-  return n != null && n > 0 ? n : null;
-}
-
 function sanitizeTravelText(value = '') {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -491,17 +500,6 @@ function toAbsoluteUrlForHost(value = '', host = '') {
   if (!base) return clean;
   if (clean.startsWith('/')) return `${base}${clean}`;
   return `${base}/${clean}`;
-}
-
-function clearDistanceFields(item) {
-  item.distanceKm = null;
-  item.distanceText = '';
-  item.distanceComputed = false;
-  item.distanceFromWorkAddress = '';
-  item.driveMinutes = null;
-  item.driveText = '';
-  item.transitMinutes = null;
-  item.transitText = '';
 }
 
 function isLikelyResidentialListing(item = {}) {
@@ -721,111 +719,68 @@ function haversineKm(a, b) {
   return 6371 * c;
 }
 
-function isCacheFresh(entry) {
-  if (!entry || !entry.updatedAt) return false;
-  return Date.now() - new Date(entry.updatedAt).getTime() <= TRAVEL_CACHE_TTL_MS;
-}
-
-function getCachedRouteMinutes(routeCache, key) {
-  const entry = routeCache?.[key];
-  if (!entry) return { hasValue: false, minutes: null, fresh: false };
-  return {
-    hasValue: true,
-    minutes: toDurationMinutesOrNull(entry.minutes),
-    fresh: isCacheFresh(entry)
-  };
-}
-
-function setCachedRouteMinutes(routeCache, key, minutes) {
-  routeCache[key] = {
-    minutes: toDurationMinutesOrNull(minutes),
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function parseTransportDurationToMinutes(duration = '') {
-  const m = String(duration || '').match(/(\d{2})d(\d{2}):(\d{2}):(\d{2})/);
-  if (!m) return null;
-
-  const days = Number(m[1]);
-  const hours = Number(m[2]);
-  const mins = Number(m[3]);
-  const secs = Number(m[4]);
-
-  if (![days, hours, mins, secs].every(Number.isFinite)) return null;
-
-  const total = days * 24 * 60 + hours * 60 + mins + Math.round(secs / 60);
-  return total > 0 ? total : null;
-}
-
-function buildCoordRouteKey(prefix, a, b) {
-  const one = `${Number(a.lat).toFixed(5)},${Number(a.lon).toFixed(5)}`;
-  const two = `${Number(b.lat).toFixed(5)},${Number(b.lon).toFixed(5)}`;
-  return `${prefix}:${one}->${two}`;
-}
-
-function buildAddressRouteKey(prefix, from, to) {
-  return `${prefix}:${String(from || '').toLowerCase()}->${String(to || '').toLowerCase()}`;
-}
-
-function resolveNextMondayDateIso(referenceDate = new Date()) {
-  const now = new Date(referenceDate);
-  const day = now.getDay(); // 0 (Sun) ... 6 (Sat)
-  const delta = (1 - day + 7) % 7;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + delta);
-  return monday.toISOString().slice(0, 10);
-}
-
-function resolveTransitReference() {
-  return {
-    date: resolveNextMondayDateIso(),
-    time: '08:00',
-    transportations: 'train',
-    cachePolicyKey: 'monday-0800-train'
-  };
-}
-
 async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
-  if (!workCoords || !listingCoords) return null;
+  if (!workCoords || !listingCoords) return { minutes: null, status: 'missing-address' };
 
-  const key = buildCoordRouteKey('drive', workCoords, listingCoords);
-  const cached = getCachedRouteMinutes(routeCache, key);
-  if (cached.fresh && cached.minutes != null) return cached.minutes;
+  const key = buildDriveCacheKey(listingCoords, workCoords);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh && cached.minutes != null) {
+    return { minutes: cached.minutes, status: 'ok' };
+  }
 
   try {
     const payload = await fetchJson(
-      `https://router.project-osrm.org/route/v1/driving/${workCoords.lon},${workCoords.lat};${listingCoords.lon},${listingCoords.lat}?overview=false`
+      `https://router.project-osrm.org/route/v1/driving/${listingCoords.lon},${listingCoords.lat};${workCoords.lon},${workCoords.lat}?overview=false`
     );
 
     const seconds = Number(payload?.routes?.[0]?.duration);
     const minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : null;
-    setCachedRouteMinutes(routeCache, key, minutes);
-    return minutes;
-  } catch {
-    return cached.hasValue ? cached.minutes : null;
+    setCachedRoute(routeCache, key, { minutes, route: null, status: minutes == null ? 'route-failed' : 'ok' });
+    return { minutes, status: minutes == null ? 'route-failed' : 'ok' };
+  } catch (err) {
+    if (cached.hasValue) return { minutes: cached.minutes, status: 'cached-stale' };
+    return { minutes: null, status: 'route-failed', error: err.message };
   }
 }
 
-async function fetchTransitMinutes(workAddress, listingAddress, routeCache) {
-  if (!workAddress || !listingAddress) return null;
+async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
+  if (!workAddress || !listingAddress) {
+    return { minutes: null, route: null, status: 'missing-address' };
+  }
 
   const transitRef = resolveTransitReference();
-  const key = buildAddressRouteKey(`transit:${transitRef.cachePolicyKey}`, listingAddress, workAddress);
-  const cached = getCachedRouteMinutes(routeCache, key);
-  if (cached.fresh && cached.minutes != null) return cached.minutes;
+  const key = buildTransitCacheKey(listingAddress, workAddress);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh && cached.minutes != null) {
+    return { minutes: cached.minutes, route: cached.route, status: 'ok' };
+  }
 
   try {
-    const payload = await fetchJson(
-      `https://transport.opendata.ch/v1/connections?limit=1&from=${encodeURIComponent(listingAddress)}&to=${encodeURIComponent(workAddress)}&date=${encodeURIComponent(transitRef.date)}&time=${encodeURIComponent(transitRef.time)}&transportations=${encodeURIComponent(transitRef.transportations)}`
-    );
+    const url = new URL('https://transport.opendata.ch/v1/connections');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('from', listingAddress);
+    url.searchParams.set('to', workAddress);
+    url.searchParams.set('date', transitRef.date);
+    url.searchParams.set('time', transitRef.arrivalTime);
+    url.searchParams.set('isArrivalTime', '1');
 
-    const duration = payload?.connections?.[0]?.duration;
-    const minutes = parseTransportDurationToMinutes(duration);
-    setCachedRouteMinutes(routeCache, key, minutes);
-    return minutes;
-  } catch {
-    return cached.hasValue ? cached.minutes : null;
+    const payload = await fetchJson(url.toString());
+    const connection = payload?.connections?.[0] || null;
+    const minutes = parseTransportDurationToMinutes(connection?.duration || '');
+    const route = minutes == null ? null : normalizeTransitConnection(connection, transitRef);
+
+    setCachedRoute(routeCache, key, {
+      minutes,
+      route,
+      status: minutes == null ? 'route-failed' : 'ok'
+    });
+
+    return { minutes, route, status: minutes == null ? 'route-failed' : 'ok' };
+  } catch (err) {
+    if (cached.hasValue) {
+      return { minutes: cached.minutes, route: cached.route, status: 'cached-stale' };
+    }
+    return { minutes: null, route: null, status: 'route-failed', error: err.message };
   }
 }
 
@@ -914,6 +869,43 @@ async function computeDistanceFromWork(item, workCoords, geocodeCache) {
     listingAddress,
     listingCoords
   };
+}
+
+async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCache, routeCache) {
+  if (!item.display) {
+    clearCommuteFields(item);
+    return;
+  }
+
+  const distance = await computeDistanceFromWork(item, workCoords, geocodeCache);
+  if (!distance.computed || !distance.listingCoords || !distance.listingAddress) {
+    clearCommuteFields(item);
+    setCommuteFailureFields(item, distance.listingAddress ? 'geocode-failed' : 'missing-address', 'Trajet indisponible: adresse non géocodée.');
+    item.distanceFromWorkAddress = workAddress || '';
+    return;
+  }
+
+  const [drive, transit] = await Promise.all([
+    fetchDrivingMinutes(workCoords, distance.listingCoords, routeCache),
+    fetchTransitRoute(workAddress, distance.listingAddress, routeCache)
+  ]);
+
+  setCommuteSuccessFields(item, {
+    workAddress,
+    distanceKm: distance.distanceKm,
+    driveMinutes: drive.minutes,
+    transitMinutes: transit.minutes,
+    transitRoute: transit.route,
+    driveStatus: drive.status,
+    transitStatus: transit.status
+  });
+
+  const warnings = [];
+  if (drive.status === 'cached-stale') warnings.push('Temps voiture issu du cache.');
+  if (drive.status === 'route-failed') warnings.push('Temps voiture indisponible.');
+  if (transit.status === 'cached-stale') warnings.push('Trajet public issu du cache.');
+  if (transit.status === 'route-failed') warnings.push('Transport public indisponible.');
+  item.commuteWarnings = warnings;
 }
 
 function mergeNotesWithEntryDate(notes = '', moveInDate = null) {
@@ -2776,6 +2768,14 @@ async function main() {
   });
   migrateTrackerStatuses(tracker);
 
+  const geocodeCache = await readJsonSafe(GEOCODE_CACHE_PATH, {});
+  const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
+  const workAddress = config.preferences?.workplaceAddress || config.preferences?.workAddress || DEFAULT_WORK_ADDRESS;
+  const workCoords = await geocodeAddress(workAddress, geocodeCache);
+  if (!workCoords) {
+    console.error(`WARN commute: could not geocode workplace "${workAddress}"`);
+  }
+
   const trackerMap = toMap(tracker.listings || []);
   const targetAreaSet = buildTargetAreaSet(config.areas || []);
 
@@ -2948,11 +2948,11 @@ async function main() {
         item.entryDateFetched = Boolean(item.entryDateText);
       }
 
-      clearDistanceFields(item);
+      await computeCommuteFromWork(item, workAddress, workCoords, geocodeCache, routeCache);
     } else {
       item.entryDateText = null;
       item.entryDateFetched = false;
-      clearDistanceFields(item);
+      await computeCommuteFromWork(item, workAddress, workCoords, geocodeCache, routeCache);
     }
 
     if (!item.display) {
@@ -2980,14 +2980,20 @@ async function main() {
         ...item,
         pinned: !!existing.pinned,
         entryDateText,
-        distanceKm: null,
-        distanceText: '',
-        driveMinutes: null,
-        driveText: '',
-        transitMinutes: null,
-        transitText: '',
-        distanceComputed: false,
-        distanceFromWorkAddress: '',
+        distanceKm: item.distanceComputed ? item.distanceKm : null,
+        distanceText: item.distanceComputed ? item.distanceText || '' : '',
+        driveMinutes: toDurationMinutesOrNull(item.driveMinutes),
+        driveText: formatMinutesText(item.driveMinutes),
+        driveRouteStatus: item.driveRouteStatus || 'missing-address',
+        transitMinutes: toDurationMinutesOrNull(item.transitMinutes),
+        transitText: formatMinutesText(item.transitMinutes),
+        transitRouteStatus: item.transitRouteStatus || 'missing-address',
+        transitRouteLabel: item.transitRouteLabel || 'Arrivée 08:00',
+        transitRouteComputedAt: item.transitRouteComputedAt || null,
+        transitRoute: item.transitRoute || null,
+        commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
+        distanceComputed: !!item.distanceComputed,
+        distanceFromWorkAddress: item.distanceFromWorkAddress || workAddress,
         publishedAt: item.publishedAt || existing.publishedAt || null,
         status: normalizeStatus(existing.status || 'À trier'),
         notes: mergeNotesWithEntryDate(existing.notes || '', entryDateText),
@@ -3006,9 +3012,17 @@ async function main() {
         distanceKm: item.distanceComputed ? item.distanceKm : null,
         distanceText: item.distanceComputed ? item.distanceText || '' : '',
         driveMinutes: toDurationMinutesOrNull(item.driveMinutes),
-        driveText: toDurationMinutesOrNull(item.driveMinutes) != null ? `${Math.round(toDurationMinutesOrNull(item.driveMinutes))} min` : '',
+        driveText: formatMinutesText(item.driveMinutes),
+        driveRouteStatus: item.driveRouteStatus || 'missing-address',
         transitMinutes: toDurationMinutesOrNull(item.transitMinutes),
-        transitText: toDurationMinutesOrNull(item.transitMinutes) != null ? `${Math.round(toDurationMinutesOrNull(item.transitMinutes))} min` : '',
+        transitText: formatMinutesText(item.transitMinutes),
+        transitRouteStatus: item.transitRouteStatus || 'missing-address',
+        transitRouteLabel: item.transitRouteLabel || 'Arrivée 08:00',
+        transitRouteComputedAt: item.transitRouteComputedAt || null,
+        transitRoute: item.transitRoute || null,
+        commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
+        distanceComputed: !!item.distanceComputed,
+        distanceFromWorkAddress: item.distanceFromWorkAddress || workAddress,
         publishedAt: item.publishedAt || null,
         status: 'À trier',
         notes: mergeNotesWithEntryDate('', entryDateText),
@@ -3235,6 +3249,8 @@ async function main() {
     listings: merged
   };
 
+  await fs.writeFile(GEOCODE_CACHE_PATH, JSON.stringify(geocodeCache, null, 2));
+  await fs.writeFile(ROUTE_CACHE_PATH, JSON.stringify(routeCache, null, 2));
   await fs.writeFile(TRACKER_PATH, JSON.stringify(newTracker, null, 2));
   await fs.writeFile(LATEST_PATH, JSON.stringify(latest, null, 2));
   completeStep('Images et sauvegarde');

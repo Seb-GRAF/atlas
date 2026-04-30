@@ -42,6 +42,7 @@ const TRACKER_PATH = path.join(DATA_DIR, 'tracker.json');
 const GEOCODE_CACHE_PATH = path.join(DATA_DIR, 'geocode-cache.json');
 const ROUTE_CACHE_PATH = path.join(DATA_DIR, 'route-cache.json');
 const TRAVEL_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_WORK_ADDRESS = 'Gare de Fribourg, 1700 Fribourg, Suisse';
 
 async function readJsonSafe(p, fallback = {}) {
   try {
@@ -62,7 +63,16 @@ function httpsGet(url) {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        if (res.statusCode >= 400) {
+          reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(data));
+        } catch (err) {
+          reject(new Error(`Invalid JSON from ${url}: ${err.message}`));
+        }
       });
     }).on('error', reject);
   });
@@ -181,7 +191,7 @@ async function main() {
   const geocodeCache = await readJsonSafe(GEOCODE_CACHE_PATH, {});
   const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
   
-  const workAddress = config.preferences?.workplaceAddress || 'Rue Etraz 4, 1003 Lausanne, Suisse';
+  const workAddress = config.preferences?.workplaceAddress || config.preferences?.workAddress || DEFAULT_WORK_ADDRESS;
   console.log(`Workplace: ${workAddress}`);
   console.log(`Commute direction: Apartment -> Work (Monday arrival 8h)`);
   

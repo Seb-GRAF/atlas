@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AtlasMap, type AtlasMapPin, MapControls } from '../components';
 import { useAtlasMutations, useAtlasState } from '../data/hooks';
 import { listStages, matchesStage } from '../data/adapt';
@@ -7,15 +7,69 @@ import { useScan } from '../scan';
 import { TopBar } from './TopBar';
 import { ListPanel } from './ListPanel';
 import { DetailPanel } from './DetailPanel';
-import type { AtlasListing, AtlasListingStatus } from '../types';
+import { EmptyListPanel } from './EmptyListPanel';
+import { ScanProgressCard } from './ScanProgressCard';
+import { SettingsDrawer, SettingsScrim } from './SettingsDrawer';
+import { MobileShell } from './mobile/MobileShell';
+import type { AtlasListing, AtlasListingSource, AtlasListingStatus, AtlasProfile } from '../types';
+import type { ScanJob } from '../../api/schemas';
 
 const VEVEY_FALLBACK = { lat: 46.47, lon: 6.84, zoom: 11 };
+const MOBILE_BREAKPOINT = 768;
+
+const ALL_SOURCES: AtlasListingSource[] = [
+  'immobilier.ch',
+  'flatfox.ch',
+  'naef.ch',
+  'bernard-nicod',
+  'Retraites Populaires',
+  'anibis.ch'
+];
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < MOBILE_BREAKPOINT
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+    const handler = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    setIsMobile(mql.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+  return isMobile;
+}
+
+function buildScanSources(profile: AtlasProfile, scan: ScanJob | null) {
+  const enabled = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
+  const total = enabled.length || ALL_SOURCES.length;
+  const done = scan?.done ?? 0;
+  const running = scan?.currentStep ?? null;
+  return {
+    total,
+    done,
+    sources: enabled.map<{ name: string; state: 'done' | 'running' | 'queued' | 'error' }>((name, idx) => {
+      if (idx < done) return { name, state: 'done' };
+      if (running && running.toLowerCase().includes(name.split('.')[0].toLowerCase()))
+        return { name, state: 'running' };
+      if (idx === done) return { name, state: 'running' };
+      return { name, state: 'queued' };
+    })
+  };
+}
 
 export function AtlasShell() {
+  const isMobile = useIsMobile();
+  if (isMobile) return <MobileShell />;
+  return <DesktopShell />;
+}
+
+function DesktopShell() {
   const { listings, profile, isLoading, error } = useAtlasState();
   const { setStatus, togglePin, dismiss } = useAtlasMutations();
   const [urlState, updateUrl] = useAtlasUrlState();
-  const { scan, start: startScan } = useScan();
+  const { scan, start: startScan, cancel: cancelScan } = useScan();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const stages = useMemo(() => listStages(listings), [listings]);
 
@@ -43,6 +97,10 @@ export function AtlasShell() {
   const initialCenter = profile.workplaceCoords
     ? { lat: profile.workplaceCoords.lat, lon: profile.workplaceCoords.lon, zoom: 11 }
     : VEVEY_FALLBACK;
+
+  const scanRunning = !!scan && scan.status === 'running';
+  const showEmpty = !isLoading && listings.length === 0 && !scanRunning;
+  const enabledSourceLabels = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
 
   return (
     <div
@@ -76,22 +134,32 @@ export function AtlasShell() {
         stages={stages}
         stage={urlState.stage}
         onStageChange={(stage) => updateUrl({ stage, listing: null })}
-        onOpenSettings={() => {
-          /* phase 4 */
-        }}
+        onOpenSettings={() => setSettingsOpen(true)}
         onScan={() => startScan()}
-        scanning={!!scan && scan.status === 'running'}
+        scanning={scanRunning}
       />
 
       <ListPanel
         zones={profile.zones}
-        listings={filtered}
+        listings={showEmpty ? [] : filtered}
         selectedId={urlState.listing}
         onSelect={(id) => updateUrl({ listing: id })}
         generatedAt={profile.generatedAt}
+        emptyContent={
+          showEmpty ? (
+            <EmptyListPanel
+              zonesCount={profile.zones.length}
+              sources={enabledSourceLabels}
+              onScan={() => startScan()}
+              onOpenSettings={() => setSettingsOpen(true)}
+            />
+          ) : null
+        }
       />
 
-      {selected ? (
+      {scanRunning ? <ScanCardConnector profile={profile} scan={scan} onCancel={() => cancelScan()} /> : null}
+
+      {selected && !settingsOpen ? (
         <DetailPanel
           listing={selected}
           onTogglePin={(id) => togglePin.mutate(id)}
@@ -110,9 +178,46 @@ export function AtlasShell() {
         style={{ position: 'absolute', right: 432, bottom: 24, zIndex: 4 }}
       />
 
+      {settingsOpen ? (
+        <>
+          <SettingsScrim onClick={() => setSettingsOpen(false)} />
+          <SettingsDrawer
+            profile={profile}
+            onClose={() => setSettingsOpen(false)}
+            onSave={() => {
+              // Profile mutations land in a follow-up phase; close for now.
+              setSettingsOpen(false);
+            }}
+          />
+        </>
+      ) : null}
+
       {isLoading ? <LoadingIndicator /> : null}
       {error ? <ErrorBanner message={(error as Error).message} /> : null}
     </div>
+  );
+}
+
+function ScanCardConnector({
+  profile,
+  scan,
+  onCancel
+}: {
+  profile: AtlasProfile;
+  scan: ScanJob;
+  onCancel: () => void;
+}) {
+  const { total, done, sources } = buildScanSources(profile, scan);
+  return (
+    <ScanProgressCard
+      total={total}
+      done={done}
+      sources={sources}
+      onCancel={onCancel}
+      onBackground={() => {
+        /* card hides itself when scan completes; nothing to do here */
+      }}
+    />
   );
 }
 

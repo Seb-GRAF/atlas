@@ -34,7 +34,8 @@ const panelStyle: CSSProperties = {
   zIndex: 4,
   display: 'flex',
   flexDirection: 'column',
-  overflow: 'hidden'
+  overflow: 'hidden',
+  animation: 'atlas-detail-in 180ms ease-out'
 };
 
 const eyebrowStyle: CSSProperties = {

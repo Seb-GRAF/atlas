@@ -37,7 +37,8 @@ const drawerStyle: CSSProperties = {
   zIndex: 6,
   display: 'flex',
   flexDirection: 'column',
-  overflow: 'hidden'
+  overflow: 'hidden',
+  animation: 'atlas-drawer-in 220ms cubic-bezier(.2,.8,.2,1)'
 };
 
 const eyebrowStyle: CSSProperties = {

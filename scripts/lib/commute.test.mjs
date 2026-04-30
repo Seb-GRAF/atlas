@@ -21,6 +21,7 @@ test('parseTransportDurationToMinutes parses Swiss transport durations', () => {
 
 test('resolveNextMondayDateIso returns same day for Monday and next Monday for Tuesday', () => {
   assert.equal(resolveNextMondayDateIso(new Date('2026-05-04T10:00:00+02:00')), '2026-05-04');
+  assert.equal(resolveNextMondayDateIso(new Date('2026-05-04T00:30:00+02:00')), '2026-05-04');
   assert.equal(resolveNextMondayDateIso(new Date('2026-05-05T10:00:00+02:00')), '2026-05-11');
 });
 

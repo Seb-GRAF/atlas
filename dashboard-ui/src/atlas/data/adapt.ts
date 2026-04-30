@@ -1,13 +1,4 @@
 import type { DashboardState, Listing as ApiListing, ProfileDetail } from '../../api/schemas';
-import {
-  getImageUrls,
-  isNewToday,
-  listingSourceLabel,
-  listingTitle,
-  normalizeListingStatus,
-  publishedLabel,
-  publishedMeta
-} from '../../utils/listings';
 import type {
   AtlasListing,
   AtlasListingSource,
@@ -26,56 +17,149 @@ const KNOWN_SOURCES: AtlasListingSource[] = [
   'anibis.ch'
 ];
 
-const STATUS_FALLBACKS: Record<string, AtlasListingStatus> = {
-  'À trier': 'À trier',
-  'À contacter': 'À contacter',
-  Contacté: 'À contacter',
-  'Visite prévue': 'Visite prévue',
-  'Dossier à envoyer': 'Dossier à envoyer',
-  'Dossier envoyé': 'Dossier envoyé',
-  'Relance à faire': 'À contacter',
-  Accepté: 'Dossier envoyé',
-  Écartée: 'Écartée',
-  'Refus régie': 'Refus régie'
-};
-
-function toAtlasStatus(raw: string | null | undefined): AtlasListingStatus {
-  const normalized = normalizeListingStatus(raw);
-  return STATUS_FALLBACKS[normalized] ?? 'À trier';
+function normalizeRawStatus(raw: string | null | undefined): AtlasListingStatus {
+  const s = String(raw || '').trim();
+  if (!s || s === 'À trier') return 'À trier';
+  if (s === 'À contacter' || s === 'Sauvegardé' || s === 'Gardée') return 'À contacter';
+  if (
+    [
+      'Visite',
+      'Visite demandée',
+      'Visite planifiée',
+      'Visité',
+      'Visite prévue'
+    ].includes(s)
+  )
+    return 'Visite prévue';
+  if (['Dossier', 'Dossier prêt à envoyer', 'Dossier à envoyer'].includes(s))
+    return 'Dossier à envoyer';
+  if (s === 'Dossier envoyé') return 'Dossier envoyé';
+  if (s === 'Refus régie') return 'Refus régie';
+  if (s === 'Refusé' || s === 'Écartée') return 'Écartée';
+  if (s === 'Accepté') return 'Dossier envoyé';
+  if (['Contacté', 'Contactée', 'Relance', 'Relance J+2', 'Relance à faire', 'Sans réponse'].includes(s))
+    return 'À contacter';
+  return 'À trier';
 }
 
-function toAtlasSource(raw: string | null | undefined): AtlasListingSource | string {
-  const label = (listingSourceLabel({ source: raw ?? null, url: null } as ApiListing) || '').toLowerCase();
+function rawSourceLabel(item: ApiListing): string {
+  const raw = String(item.source || '').trim().toLowerCase();
+  if (raw.includes('immobilier')) return 'immobilier.ch';
+  if (raw.includes('flatfox')) return 'flatfox.ch';
+  if (raw.includes('naef')) return 'naef.ch';
+  if (raw.includes('bernard') || raw.includes('nicod')) return 'bernard-nicod';
+  if (raw.includes('retraites') || raw.includes('populaires')) return 'Retraites Populaires';
+  if (raw.includes('anibis')) return 'anibis.ch';
+  const url = String(item.url || '').trim();
+  if (url) {
+    try {
+      return new URL(url).hostname.replace(/^www\./i, '').toLowerCase();
+    } catch {
+      /* fallthrough */
+    }
+  }
+  return raw;
+}
+
+function toAtlasSource(raw: ApiListing): AtlasListingSource | string {
+  const label = rawSourceLabel(raw);
   for (const known of KNOWN_SOURCES) {
     if (label.includes(known.toLowerCase())) return known;
   }
-  return raw || label || 'unknown';
+  return label || 'unknown';
 }
 
-function shortAge(item: ApiListing): string {
-  const meta = publishedMeta(item);
-  return meta.label ?? '';
+function getImageUrls(item: ApiListing): string[] {
+  if (Array.isArray(item.imageUrlsLocal) && item.imageUrlsLocal.length) return item.imageUrlsLocal;
+  if (Array.isArray(item.imageUrls) && item.imageUrls.length) return item.imageUrls;
+  if (Array.isArray(item.imageUrlsRemote) && item.imageUrlsRemote.length) return item.imageUrlsRemote;
+  if (item.imageUrl) return [item.imageUrl];
+  return [];
+}
+
+function isNewToday(item: ApiListing): boolean {
+  if (!item.firstSeenAt || item.isRemoved) return false;
+  const seen = new Date(item.firstSeenAt);
+  if (!Number.isFinite(seen.getTime())) return false;
+  const today = new Date();
+  return (
+    seen.getFullYear() === today.getFullYear() &&
+    seen.getMonth() === today.getMonth() &&
+    seen.getDate() === today.getDate()
+  );
+}
+
+function formatAge(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h`;
+  return `${Math.floor(hours / 24)} j`;
+}
+
+type AgeMeta = {
+  label: string | null;
+  source: 'published' | 'firstSeen' | 'none';
+};
+
+function ageMeta(item: ApiListing): AgeMeta {
+  const parse = (iso: string | null | undefined): string | null => {
+    if (!iso) return null;
+    const ts = new Date(iso).getTime();
+    if (!Number.isFinite(ts)) return null;
+    return formatAge(Math.max(0, Date.now() - ts));
+  };
+  const published = parse(item.publishedAt);
+  if (published) return { label: published, source: 'published' };
+  const seen = parse(item.firstSeenAt);
+  if (seen) return { label: seen, source: 'firstSeen' };
+  return { label: null, source: 'none' };
+}
+
+function formatRooms(rooms: number): string {
+  return Number.isInteger(rooms) ? String(rooms) : rooms.toString().replace('.', ',');
+}
+
+function cityFromAddress(address: string | null | undefined): string | null {
+  if (!address) return null;
+  const parts = address.split(',').map((s) => s.trim()).filter(Boolean);
+  const last = parts[parts.length - 1];
+  if (!last) return null;
+  return last.replace(/^\d{4,5}\s+/, '').trim() || null;
+}
+
+function listingTitle(item: ApiListing): string {
+  if (item.title && item.title.trim()) return item.title;
+  const city = item.area || cityFromAddress(item.address);
+  if (item.rooms != null && city) return `${formatRooms(item.rooms)} pièces à ${city}`;
+  if (item.rooms != null) return `${formatRooms(item.rooms)} pièces`;
+  if (city) return city;
+  return item.objectType || 'Annonce';
 }
 
 export function adaptListing(item: ApiListing): AtlasListing {
-  const id = String(item.id);
+  const meta = ageMeta(item);
   return {
-    id,
-    title: item.title || listingTitle(item),
+    id: String(item.id),
+    title: listingTitle(item),
     area: item.area ?? '',
     address: item.address ?? '',
     rooms: item.rooms ?? null,
     surfaceM2: item.surfaceM2 ?? null,
     totalChf: item.totalChf ?? null,
-    source: toAtlasSource(item.source),
+    source: toAtlasSource(item),
     url: item.url ?? null,
     pinned: !!item.pinned,
     isNew: isNewToday(item),
     isRemoved: !!item.isRemoved,
-    status: toAtlasStatus(item.status),
+    status: normalizeRawStatus(item.status),
     notes: item.notes ?? '',
-    publishedLabel: publishedLabel(item),
-    publishedShort: shortAge(item),
+    publishedLabel: meta.label
+      ? meta.source === 'firstSeen'
+        ? `Vu ${meta.label}`
+        : `il y a ${meta.label}`
+      : 'Inconnue',
+    publishedShort: meta.label ?? '',
     transitText: item.transitText ?? null,
     driveText: item.driveText ?? null,
     distanceText: item.distanceText ?? null,
@@ -127,6 +211,19 @@ export function matchesStage(listing: AtlasListing, stage: AtlasStageValue): boo
   return def ? def.match(listing) : true;
 }
 
+function relativeFr(iso: string): string {
+  const ts = new Date(iso).getTime();
+  if (!Number.isFinite(ts)) return '';
+  const ageMs = Math.max(0, Date.now() - ts);
+  const minutes = Math.floor(ageMs / 60000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `il y a ${days} j`;
+}
+
 export function adaptProfile(detail: ProfileDetail | null, state: DashboardState | null): AtlasProfile {
   const slug = detail?.slug ?? state?.profile ?? 'default';
   const zones = detail?.areas?.map((a) => a.label) ?? [];
@@ -159,17 +256,4 @@ export function adaptProfile(detail: ProfileDetail | null, state: DashboardState
     budgetCeilingChf: detail?.filters?.maxTotalHardChf ?? null,
     enabledSources: enabled
   };
-}
-
-function relativeFr(iso: string): string {
-  const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return '';
-  const ageMs = Math.max(0, Date.now() - ts);
-  const minutes = Math.floor(ageMs / 60000);
-  if (minutes < 1) return "à l'instant";
-  if (minutes < 60) return `il y a ${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `il y a ${hours} h`;
-  const days = Math.floor(hours / 24);
-  return `il y a ${days} j`;
 }

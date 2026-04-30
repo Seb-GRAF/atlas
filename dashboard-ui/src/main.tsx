@@ -1,6 +1,7 @@
 import '@mantine/core/styles.css';
 import '@mantine/notifications/styles.css';
 import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import './styles/global.css';
 
 import { StrictMode } from 'react';

@@ -52,6 +52,14 @@ async function readJsonSafe(p, fallback = {}) {
   }
 }
 
+async function readJsonRequired(p) {
+  try {
+    return JSON.parse(await fs.readFile(p, 'utf8'));
+  } catch (err) {
+    throw new Error(`Could not read required JSON ${p}: ${err.message}`);
+  }
+}
+
 async function writeJson(p, data) {
   await fs.mkdir(path.dirname(p), { recursive: true });
   await fs.writeFile(p, JSON.stringify(data, null, 2));
@@ -59,7 +67,7 @@ async function writeJson(p, data) {
 
 function httpsGet(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'User-Agent': 'apartment-search/1.0' } }, (res) => {
+    const req = https.get(url, { headers: { 'User-Agent': 'apartment-search/1.0' } }, (res) => {
       let data = '';
       res.on('data', (chunk) => (data += chunk));
       res.on('end', () => {
@@ -74,7 +82,11 @@ function httpsGet(url) {
           reject(new Error(`Invalid JSON from ${url}: ${err.message}`));
         }
       });
-    }).on('error', reject);
+    });
+    req.setTimeout(20000, () => {
+      req.destroy(new Error(`Request timed out: ${url}`));
+    });
+    req.on('error', reject);
   });
 }
 
@@ -194,8 +206,8 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
 async function main() {
   console.log(`Recomputing distances for profile: ${PROFILE}`);
   
-  const config = await readJsonSafe(CONFIG_PATH, {});
-  const tracker = await readJsonSafe(TRACKER_PATH, { listings: [] });
+  const config = await readJsonRequired(CONFIG_PATH);
+  const tracker = await readJsonRequired(TRACKER_PATH);
   const geocodeCache = await readJsonSafe(GEOCODE_CACHE_PATH, {});
   const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
   

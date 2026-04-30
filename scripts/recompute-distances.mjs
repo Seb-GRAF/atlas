@@ -3,6 +3,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import https from 'node:https';
 import { fileURLToPath } from 'node:url';
+import {
+  buildDriveCacheKey,
+  buildTransitCacheKey,
+  formatMinutesText,
+  getCachedRoute,
+  normalizeTransitConnection,
+  parseTransportDurationToMinutes,
+  resolveTransitReference,
+  setCachedRoute,
+  setCommuteSuccessFields
+} from './lib/commute.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +39,7 @@ const CONFIG_PATH = path.join(DATA_DIR, 'watch-config.json');
 const TRACKER_PATH = path.join(DATA_DIR, 'tracker.json');
 const GEOCODE_CACHE_PATH = path.join(DATA_DIR, 'geocode-cache.json');
 const ROUTE_CACHE_PATH = path.join(DATA_DIR, 'route-cache.json');
+const TRAVEL_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
 async function readJsonSafe(p, fallback = {}) {
   try {
@@ -77,28 +89,69 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function fetchDrivingMinutes(listingCoords, workCoords, cache) {
-  // Route: apartment -> work (commute to office)
-  const key = `drive:${listingCoords.lat.toFixed(5)},${listingCoords.lon.toFixed(5)}->${workCoords.lat.toFixed(5)},${workCoords.lon.toFixed(5)}`;
-  if (cache[key]?.minutes != null) return cache[key].minutes;
-  
-  // OSRM: origin;destination (apartment -> work)
-  const url = `https://router.project-osrm.org/route/v1/driving/${listingCoords.lon},${listingCoords.lat};${workCoords.lon},${workCoords.lat}?overview=false`;
-  const data = await httpsGet(url);
-  const seconds = data?.routes?.[0]?.duration;
-  const minutes = seconds ? Math.round(seconds / 60) : null;
-  cache[key] = { minutes, updatedAt: new Date().toISOString() };
-  return minutes;
+async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
+  if (!workCoords || !listingCoords) return { minutes: null, status: 'missing-address' };
+
+  const key = buildDriveCacheKey(listingCoords, workCoords);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh && cached.minutes != null) {
+    return { minutes: cached.minutes, status: 'ok' };
+  }
+
+  try {
+    const payload = await httpsGet(
+      `https://router.project-osrm.org/route/v1/driving/${listingCoords.lon},${listingCoords.lat};${workCoords.lon},${workCoords.lat}?overview=false`
+    );
+
+    const seconds = Number(payload?.routes?.[0]?.duration);
+    const minutes = Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : null;
+    setCachedRoute(routeCache, key, { minutes, route: null, status: minutes == null ? 'route-failed' : 'ok' });
+    return { minutes, status: minutes == null ? 'route-failed' : 'ok' };
+  } catch (err) {
+    if (cached.hasValue) return { minutes: cached.minutes, status: 'cached-stale' };
+    return { minutes: null, status: 'route-failed', error: err.message };
+  }
 }
 
-async function fetchTransitMinutes(listingAddress, workAddress, cache) {
-  // Transit: apartment -> work (Monday arrival 8:00)
-  const key = `transit:monday-arr0800:${listingAddress.toLowerCase()}->${workAddress.toLowerCase()}`;
-  if (cache[key]?.minutes != null) return cache[key].minutes;
-  // Transit API would go here - for now return null
-  // TODO: Could use SBB/transport.opendata.ch API for Swiss transit
-  cache[key] = { minutes: null, updatedAt: new Date().toISOString() };
-  return null;
+async function fetchTransitRoute(workAddress, listingAddress, routeCache) {
+  if (!workAddress || !listingAddress) {
+    return { minutes: null, route: null, status: 'missing-address' };
+  }
+
+  const transitRef = resolveTransitReference();
+  const key = buildTransitCacheKey(listingAddress, workAddress);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh && cached.minutes != null) {
+    return { minutes: cached.minutes, route: cached.route, status: 'ok' };
+  }
+
+  try {
+    const url = new URL('https://transport.opendata.ch/v1/connections');
+    url.searchParams.set('limit', '1');
+    url.searchParams.set('from', listingAddress);
+    url.searchParams.set('to', workAddress);
+    url.searchParams.set('date', transitRef.date);
+    url.searchParams.set('time', transitRef.arrivalTime);
+    url.searchParams.set('isArrivalTime', '1');
+
+    const payload = await httpsGet(url.toString());
+    const connection = payload?.connections?.[0] || null;
+    const minutes = parseTransportDurationToMinutes(connection?.duration || '');
+    const route = minutes == null ? null : normalizeTransitConnection(connection, transitRef);
+
+    setCachedRoute(routeCache, key, {
+      minutes,
+      route,
+      status: minutes == null ? 'route-failed' : 'ok'
+    });
+
+    return { minutes, route, status: minutes == null ? 'route-failed' : 'ok' };
+  } catch (err) {
+    if (cached.hasValue) {
+      return { minutes: cached.minutes, route: cached.route, status: 'cached-stale' };
+    }
+    return { minutes: null, route: null, status: 'route-failed', error: err.message };
+  }
 }
 
 async function main() {
@@ -132,19 +185,26 @@ async function main() {
     }
     
     const distanceKm = haversineKm(workCoords.lat, workCoords.lon, listingCoords.lat, listingCoords.lon);
-    const driveMinutes = await fetchDrivingMinutes(listingCoords, workCoords, routeCache);
-    const transitMinutes = await fetchTransitMinutes(addr + ', Suisse', workAddress, routeCache);
-    
-    listing.distanceKm = Number(distanceKm.toFixed(1));
-    listing.distanceText = `${listing.distanceKm} km`;
-    listing.distanceComputed = true;
-    listing.distanceFromWorkAddress = workAddress;
-    listing.driveMinutes = driveMinutes;
-    listing.driveText = driveMinutes ? `${driveMinutes} min` : '';
-    listing.transitMinutes = transitMinutes;
-    listing.transitText = transitMinutes ? `${transitMinutes} min` : '';
-    
-    console.log(`  ${listing.id}: ${listing.distanceKm} km, ${driveMinutes ?? '?'} min drive`);
+    const drive = await fetchDrivingMinutes(workCoords, listingCoords, routeCache);
+    const transit = await fetchTransitRoute(workAddress, addr + ', Suisse', routeCache);
+
+    setCommuteSuccessFields(listing, {
+      workAddress,
+      distanceKm,
+      driveMinutes: drive.minutes,
+      transitMinutes: transit.minutes,
+      transitRoute: transit.route,
+      driveStatus: drive.status,
+      transitStatus: transit.status
+    });
+    listing.commuteWarnings = [
+      drive.status === 'cached-stale' ? 'Temps voiture issu du cache.' : '',
+      transit.status === 'cached-stale' ? 'Trajet public issu du cache.' : '',
+      drive.status === 'route-failed' ? 'Temps voiture indisponible.' : '',
+      transit.status === 'route-failed' ? 'Transport public indisponible.' : ''
+    ].filter(Boolean);
+
+    console.log(`  ${listing.id}: ${listing.distanceKm} km, ${formatMinutesText(drive.minutes) || '?'} drive`);
     updated++;
     
     // Small delay to be nice to APIs

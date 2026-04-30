@@ -179,6 +179,15 @@ async function main() {
   const workCoords = await geocodeAddress(workAddress, geocodeCache);
   if (!workCoords) {
     console.error('Could not geocode workplace address');
+    for (const listing of tracker.listings) {
+      clearCommuteFields(listing);
+      setCommuteFailureFields(listing, 'geocode-failed', 'Trajet indisponible: adresse de travail non géocodée.');
+      listing.distanceFromWorkAddress = workAddress || '';
+    }
+    await writeJson(TRACKER_PATH, tracker);
+    await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
+    await writeJson(ROUTE_CACHE_PATH, routeCache);
+    console.log(`Marked ${tracker.listings.length} listings with workplace geocode failure`);
     return;
   }
   console.log(`Work coords: ${workCoords.lat}, ${workCoords.lon}`);

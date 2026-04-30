@@ -6,12 +6,14 @@ import { fileURLToPath } from 'node:url';
 import {
   buildDriveCacheKey,
   buildTransitCacheKey,
+  clearCommuteFields,
   formatMinutesText,
   getCachedRoute,
   normalizeTransitConnection,
   parseTransportDurationToMinutes,
   resolveTransitReference,
   setCachedRoute,
+  setCommuteFailureFields,
   setCommuteSuccessFields
 } from './lib/commute.mjs';
 
@@ -87,6 +89,14 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function buildListingAddressQuery(listing) {
+  const addressRaw = String(listing.address || '').trim();
+  const area = String(listing.area || '').trim();
+  if (addressRaw) return [addressRaw, 'Suisse'].join(', ');
+  if (area) return [area, 'Suisse'].join(', ');
+  return '';
 }
 
 async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
@@ -175,18 +185,27 @@ async function main() {
   
   let updated = 0;
   for (const listing of tracker.listings) {
-    const addr = listing.address || '';
-    if (!addr) continue;
-    
-    const listingCoords = await geocodeAddress(addr + ', Suisse', geocodeCache);
+    const listingAddress = buildListingAddressQuery(listing);
+    if (!listingAddress) {
+      clearCommuteFields(listing);
+      setCommuteFailureFields(listing, 'missing-address', 'Trajet indisponible: adresse manquante.');
+      listing.distanceFromWorkAddress = workAddress;
+      console.log(`  Skip ${listing.id}: missing address`);
+      continue;
+    }
+
+    const listingCoords = await geocodeAddress(listingAddress, geocodeCache);
     if (!listingCoords) {
-      console.log(`  Skip ${listing.id}: could not geocode "${addr}"`);
+      clearCommuteFields(listing);
+      setCommuteFailureFields(listing, 'geocode-failed', 'Trajet indisponible: adresse non géocodée.');
+      listing.distanceFromWorkAddress = workAddress;
+      console.log(`  Skip ${listing.id}: could not geocode "${listingAddress}"`);
       continue;
     }
     
     const distanceKm = haversineKm(workCoords.lat, workCoords.lon, listingCoords.lat, listingCoords.lon);
     const drive = await fetchDrivingMinutes(workCoords, listingCoords, routeCache);
-    const transit = await fetchTransitRoute(workAddress, addr + ', Suisse', routeCache);
+    const transit = await fetchTransitRoute(workAddress, listingAddress, routeCache);
 
     setCommuteSuccessFields(listing, {
       workAddress,

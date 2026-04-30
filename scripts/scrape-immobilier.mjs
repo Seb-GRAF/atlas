@@ -3180,17 +3180,45 @@ async function main() {
         continue;
       }
 
+      const retainsVisibleCommute = !shouldRemove && refreshed.display !== false;
+      const commuteFields = retainsVisibleCommute
+        ? {
+            distanceKm: old.distanceComputed ? old.distanceKm : null,
+            distanceText: old.distanceComputed ? old.distanceText || '' : '',
+            driveMinutes: toDurationMinutesOrNull(old.driveMinutes),
+            driveText: formatMinutesText(old.driveMinutes),
+            driveRouteStatus: old.driveRouteStatus || 'missing-address',
+            transitMinutes: toDurationMinutesOrNull(old.transitMinutes),
+            transitText: formatMinutesText(old.transitMinutes),
+            transitRouteStatus: old.transitRouteStatus || 'missing-address',
+            transitRouteLabel: old.transitRouteLabel || 'Arrivée 08:00',
+            transitRouteComputedAt: old.transitRouteComputedAt || null,
+            transitRoute: old.transitRoute || null,
+            commuteWarnings: Array.isArray(old.commuteWarnings) ? old.commuteWarnings : [],
+            distanceComputed: !!old.distanceComputed,
+            distanceFromWorkAddress: old.distanceFromWorkAddress || workAddress
+          }
+        : {
+            distanceKm: null,
+            distanceText: '',
+            driveMinutes: null,
+            driveText: '',
+            driveRouteStatus: 'missing-address',
+            transitMinutes: null,
+            transitText: '',
+            transitRouteStatus: 'missing-address',
+            transitRouteLabel: 'Arrivée 08:00',
+            transitRouteComputedAt: null,
+            transitRoute: null,
+            commuteWarnings: [],
+            distanceComputed: false,
+            distanceFromWorkAddress: ''
+          };
+
       merged.push({
         ...old,
         ...refreshed,
-        distanceKm: null,
-        distanceText: '',
-        driveMinutes: null,
-        driveText: '',
-        transitMinutes: null,
-        transitText: '',
-        distanceComputed: false,
-        distanceFromWorkAddress: '',
+        ...commuteFields,
         status: normalizeStatus(old.status),
         active: !shouldRemove,
         isRemoved: shouldRemove,

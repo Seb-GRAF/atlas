@@ -142,7 +142,7 @@ describe('DashboardPage listing details', () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    const listingButton = await screen.findByRole('button', { name: /3 pièces à Lausanne/i });
+    const listingButton = await screen.findByRole('button', { name: /3 pièces à Lausanne, CHF/i });
     const listingCard = listingButton.closest('.listing-list-card');
     expect(listingCard).toBeInstanceOf(HTMLElement);
     expect(within(listingCard as HTMLElement).queryByText('Annonce sélectionnée')).toBeNull();
@@ -156,6 +156,54 @@ describe('DashboardPage listing details', () => {
     await waitFor(() => {
       expect(within(listingCard as HTMLElement).queryByText('Annonce sélectionnée')).toBeNull();
     });
+  });
+
+  it('shows a composed photo mosaic in the selected listing details', async () => {
+    const user = userEvent.setup();
+    listingsApi.getDashboardState.mockResolvedValueOnce({
+      profile: 'test-profile',
+      tracker: {
+        statuses: ['À trier', 'À contacter', 'Contacté'],
+        listings: [
+          {
+            id: 'listing-with-photos',
+            area: 'Lausanne',
+            totalChf: 2100,
+            rooms: 3,
+            surfaceM2: 72,
+            status: 'À trier',
+            imageUrls: ['/photo-1.jpg', '/photo-2.jpg', '/photo-3.jpg', '/photo-4.jpg'],
+            firstSeenAt: '2026-04-29T12:00:00Z',
+            updatedAt: '2026-04-29T12:00:00Z',
+            publishedAt: '2026-04-29T12:00:00Z'
+          }
+        ]
+      },
+      latest: {
+        generatedAt: '2026-04-29T12:00:00Z',
+        newCount: 1
+      },
+      map: {
+        workplace: null,
+        listingsWithCoordinates: 0,
+        listingsMissingCoordinates: 1,
+        warnings: []
+      }
+    });
+
+    renderDashboard();
+
+    const listingButton = await screen.findByRole('button', { name: /3 pièces à Lausanne, CHF/i });
+    const listingCard = listingButton.closest('.listing-list-card');
+    expect(listingCard).toBeInstanceOf(HTMLElement);
+
+    await user.click(listingButton);
+
+    const photoGrid = await within(listingCard as HTMLElement).findByRole('group', { name: 'Photos de l’annonce, 4 images' });
+    expect(within(photoGrid).getAllByRole('button', { name: /Voir la photo/i })).toHaveLength(4);
+    expect(within(photoGrid).getByRole('button', { name: 'Voir la photo principale de 3 pièces à Lausanne' })).toBeTruthy();
+    expect(within(photoGrid).getByRole('button', { name: 'Voir la photo 4 de 3 pièces à Lausanne' }).className).toContain('is-row-fill');
+    expect(within(photoGrid).getByRole('img', { name: 'Photo 1 de 3 pièces à Lausanne' })).toBeTruthy();
   });
 
   it('counts missing map coordinates from the visible listings', async () => {

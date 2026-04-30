@@ -73,7 +73,7 @@ import { ErrorAlert } from '../shared/ErrorAlert';
 import { ScanOverlay } from '../shared/ScanOverlay';
 import { StatusBadge } from '../status/StatusBadge';
 import { ApartmentMap } from './ApartmentMap';
-import { ListingImageGallery } from './ListingImageGallery';
+import { ListingImageGallery, ListingMasonryGallery } from './ListingImageGallery';
 import { Lightbox, LightboxState } from './Lightbox';
 import { SwipeStack } from './SwipeStack';
 
@@ -386,6 +386,8 @@ function SelectedListingPanel({
           ) : null}
         </Group>
 
+      <ListingMasonryGallery item={item} onOpen={onOpenLightbox} />
+
       <Group grow align="flex-end">
         <Select
           label="Statut"
@@ -618,6 +620,7 @@ export function DashboardPage() {
         workplace={state?.map?.workplace || null}
         selectedListingId={selectedListing?.id || null}
         onSelectListing={selectListing}
+        onClearSelection={closeListing}
         onOpenLightbox={(urls, index) => setLightbox({ urls, index })}
         open
       />

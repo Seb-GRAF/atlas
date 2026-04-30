@@ -155,3 +155,53 @@ export function ListingImageGallery({
     </Box>
   );
 }
+
+export function ListingMasonryGallery({
+  item,
+  onOpen
+}: {
+  item: Listing;
+  onOpen: (urls: string[], index: number) => void;
+}) {
+  const urls = getImageUrls(item);
+  if (!urls.length) return null;
+  const visibleUrls = urls.slice(0, 12);
+  const overflowCount = urls.length - visibleUrls.length;
+  const title = listingTitle(item);
+
+  return (
+    <Box
+      className="listing-detail-masonry"
+      role="group"
+      aria-label={`Photos de l’annonce, ${urls.length} image${urls.length > 1 ? 's' : ''}`}
+    >
+      {visibleUrls.map((src, index) => (
+        <UnstyledButton
+          key={`${src}-${index}`}
+          type="button"
+          className={[
+            'listing-detail-masonry-item',
+            index === 0 ? 'is-featured' : '',
+            index % 5 === 2 ? 'is-tall' : '',
+            index === 3 ? 'is-row-fill' : '',
+            index % 5 === 4 ? 'is-wide' : ''
+          ].filter(Boolean).join(' ')}
+          onClick={() => onOpen(urls, index)}
+          aria-label={index === 0 ? `Voir la photo principale de ${title}` : `Voir la photo ${index + 1} de ${title}`}
+        >
+          <Image
+            src={src}
+            alt={`Photo ${index + 1} de ${title}`}
+            fit="cover"
+            loading="lazy"
+          />
+          {overflowCount > 0 && index === visibleUrls.length - 1 ? (
+            <Text component="span" className="listing-detail-masonry-more" aria-hidden>
+              +{overflowCount}
+            </Text>
+          ) : null}
+        </UnstyledButton>
+      ))}
+    </Box>
+  );
+}

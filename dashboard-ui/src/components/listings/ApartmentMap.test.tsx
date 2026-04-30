@@ -6,12 +6,16 @@ import { ApartmentMap } from './ApartmentMap';
 type MarkerRecord = {
   latLng: { lat: number; lng: number };
   events: Map<string, () => void>;
+  options?: { icon?: { html?: string }; zIndexOffset?: number };
+  element: HTMLElement;
   popup: unknown;
   on: (event: string, handler: () => void) => MarkerRecord;
   bindPopup: (content: unknown, options?: unknown) => MarkerRecord;
   addTo: (layer: unknown) => MarkerRecord;
+  getElement: () => HTMLElement;
   getLatLng: () => { lat: number; lng: number };
-  openPopup: () => void;
+  openPopup: ReturnType<typeof vi.fn>;
+  setZIndexOffset: ReturnType<typeof vi.fn>;
 };
 
 const leafletMock = vi.hoisted(() => {
@@ -23,6 +27,7 @@ const leafletMock = vi.hoisted(() => {
     off: ReturnType<typeof vi.fn>;
     invalidateSize: ReturnType<typeof vi.fn>;
     panTo: ReturnType<typeof vi.fn>;
+    panInside: ReturnType<typeof vi.fn>;
     remove: ReturnType<typeof vi.fn>;
   }> = [];
   const markers: MarkerRecord[] = [];
@@ -53,6 +58,7 @@ const leafletMock = vi.hoisted(() => {
           off: vi.fn(),
           invalidateSize: vi.fn(),
           panTo: vi.fn(),
+          panInside: vi.fn(),
           remove: vi.fn()
         };
         maps.push(map);
@@ -74,10 +80,14 @@ const leafletMock = vi.hoisted(() => {
         }),
         addTo: vi.fn()
       })),
-      marker: vi.fn((point: [number, number] | { lat: number; lng?: number; lon?: number }) => {
+      marker: vi.fn((point: [number, number] | { lat: number; lng?: number; lon?: number }, options?: { icon?: { html?: string }; zIndexOffset?: number }) => {
+        const element = document.createElement('div');
+        element.innerHTML = options?.icon?.html || '';
         const marker: MarkerRecord = {
           latLng: toLatLng(point),
           events: new Map(),
+          options,
+          element,
           popup: null,
           on(event, handler) {
             this.events.set(event, handler);
@@ -91,16 +101,26 @@ const leafletMock = vi.hoisted(() => {
             markers.push(this);
             return this;
           },
+          getElement() {
+            return this.element;
+          },
           getLatLng() {
             return this.latLng;
           },
-          openPopup: vi.fn()
+          openPopup: vi.fn(),
+          setZIndexOffset: vi.fn()
         };
         return marker;
       }),
       divIcon: vi.fn((options) => options),
       latLng: vi.fn(toLatLng),
-      latLngBounds
+      latLngBounds,
+      DomEvent: {
+        stop: vi.fn((event: Event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        })
+      }
     }
   };
 });
@@ -157,6 +177,7 @@ describe('ApartmentMap clusters', () => {
         workplace={null}
         selectedListingId={null}
         onSelectListing={vi.fn()}
+        onClearSelection={vi.fn()}
         onOpenLightbox={vi.fn()}
         open
       />
@@ -178,5 +199,182 @@ describe('ApartmentMap clusters', () => {
       { type: 'bounds', points: [[46.52, 6.63], [46.5204, 6.6304]] },
       { padding: [42, 42], maxZoom: 18 }
     );
+  });
+});
+
+describe('ApartmentMap listing markers', () => {
+  it('renders the selected listing with full collapsed shell content before selection classes are toggled', async () => {
+    render(
+      <ApartmentMap
+        listings={[{ ...listing('one', 46.52, 6.63), totalChf: 100 }]}
+        workplace={null}
+        selectedListingId="one"
+        onSelectListing={vi.fn()}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={vi.fn()}
+        open
+      />
+    );
+
+    await waitFor(() => expect(leafletMock.markers).toHaveLength(1));
+    const marker = leafletMock.markers[0];
+    const html = marker.options?.icon?.html || '';
+    const shell = marker.getElement().querySelector('.atlas-map-pin-shell');
+
+    expect(marker.popup).toBeNull();
+    expect(html).toContain('atlas-map-pin-shell');
+    expect(html).not.toContain('is-expanded');
+    expect(html).toContain('atlas-map-pin-price');
+    expect(html).toContain('atlas-map-pin-preview');
+    expect(html).toContain('Listing one');
+    expect(html).toMatch(/100(?:\s|&nbsp;)?CHF/);
+    await waitFor(() => expect(shell?.classList.contains('is-expanded')).toBe(true));
+  });
+
+  it('updates the same marker shell when a listing is selected', async () => {
+    const onSelectListing = vi.fn();
+    const onOpenLightbox = vi.fn();
+    const listings = [listing('one', 46.52, 6.63)];
+    const { rerender } = render(
+      <ApartmentMap
+        listings={listings}
+        workplace={null}
+        selectedListingId={null}
+        onSelectListing={onSelectListing}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={onOpenLightbox}
+        open
+      />
+    );
+
+    await waitFor(() => expect(leafletMock.markers).toHaveLength(1));
+    const marker = leafletMock.markers[0];
+    const shell = marker.getElement().querySelector('.atlas-map-pin-shell');
+    const preview = marker.getElement().querySelector('[data-map-preview]');
+
+    expect(shell).toBeTruthy();
+    expect(shell?.classList.contains('is-expanded')).toBe(false);
+    expect(preview?.getAttribute('aria-hidden')).toBe('true');
+    expect(preview?.hasAttribute('inert')).toBe(true);
+
+    rerender(
+      <ApartmentMap
+        listings={[{ ...listing('one', 46.52, 6.63) }]}
+        workplace={null}
+        selectedListingId="one"
+        onSelectListing={vi.fn()}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={vi.fn()}
+        open
+      />
+    );
+
+    await waitFor(() => expect(shell?.classList.contains('is-expanded')).toBe(true));
+    expect(leafletMock.markers).toHaveLength(1);
+    expect(preview?.getAttribute('aria-hidden')).toBe('false');
+    expect(preview?.hasAttribute('inert')).toBe(false);
+    expect(marker.setZIndexOffset).toHaveBeenLastCalledWith(240);
+  });
+
+  it('selects marker clicks and pans selected listings into visible padded space without opening Leaflet popups', async () => {
+    const onSelectListing = vi.fn();
+    const onOpenLightbox = vi.fn();
+    const listings = [listing('one', 46.52, 6.63)];
+    const { rerender } = render(
+      <ApartmentMap
+        listings={listings}
+        workplace={null}
+        selectedListingId={null}
+        onSelectListing={onSelectListing}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={onOpenLightbox}
+        open
+      />
+    );
+
+    await waitFor(() => expect(leafletMock.markers).toHaveLength(1));
+    leafletMock.markers[0].events.get('click')?.();
+
+    expect(onSelectListing).toHaveBeenCalledWith('one');
+
+    rerender(
+      <ApartmentMap
+        listings={listings}
+        workplace={null}
+        selectedListingId="one"
+        onSelectListing={onSelectListing}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={onOpenLightbox}
+        open
+      />
+    );
+
+    await waitFor(() =>
+      expect(leafletMock.maps[0].panInside).toHaveBeenCalledWith(
+        { lat: 46.52, lng: 6.63 },
+        {
+          paddingTopLeft: [160, 340],
+          paddingBottomRight: [160, 32],
+          animate: true,
+          duration: 0.35
+        }
+      )
+    );
+    const latestMarker = leafletMock.markers.at(-1);
+
+    expect(latestMarker?.openPopup).not.toHaveBeenCalled();
+    expect(leafletMock.maps[0].panTo).not.toHaveBeenCalled();
+  });
+
+  it('clears selection when clicking the map background but not the marker shell', async () => {
+    const onClearSelection = vi.fn();
+    render(
+      <ApartmentMap
+        listings={[listing('one', 46.52, 6.63)]}
+        workplace={null}
+        selectedListingId="one"
+        onSelectListing={vi.fn()}
+        onClearSelection={onClearSelection}
+        onOpenLightbox={vi.fn()}
+        open
+      />
+    );
+
+    await waitFor(() => expect(leafletMock.markers).toHaveLength(1));
+    const clickHandler = leafletMock.maps[0].on.mock.calls.find(([event]) => event === 'click')?.[1];
+    const shell = leafletMock.markers[0].getElement().querySelector('.atlas-map-pin-shell');
+    const markerEvent = new MouseEvent('click', { bubbles: true });
+    Object.defineProperty(markerEvent, 'target', { value: shell });
+
+    clickHandler?.({ originalEvent: markerEvent });
+    expect(onClearSelection).not.toHaveBeenCalled();
+
+    clickHandler?.({ originalEvent: new MouseEvent('click', { bubbles: true }) });
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens marker media in the lightbox without selecting the marker', async () => {
+    const onSelectListing = vi.fn();
+    const onOpenLightbox = vi.fn();
+    render(
+      <ApartmentMap
+        listings={[{ ...listing('one', 46.52, 6.63), imageUrls: ['/photo-one.jpg'] }]}
+        workplace={null}
+        selectedListingId="one"
+        onSelectListing={onSelectListing}
+        onClearSelection={vi.fn()}
+        onOpenLightbox={onOpenLightbox}
+        open
+      />
+    );
+
+    await waitFor(() => expect(leafletMock.markers).toHaveLength(1));
+    const media = leafletMock.markers[0].getElement().querySelector('[data-map-action="lightbox"]');
+    expect(media).toBeTruthy();
+
+    media?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    expect(onOpenLightbox).toHaveBeenCalledWith(['/photo-one.jpg'], 0);
+    expect(onSelectListing).not.toHaveBeenCalled();
   });
 });

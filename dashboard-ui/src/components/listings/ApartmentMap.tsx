@@ -14,7 +14,6 @@ type ListingCluster = {
   layerPoint: L.Point;
   latSum: number;
   lonSum: number;
-  containsSelected: boolean;
 };
 
 function isValidCoordinate(lat: number, lon: number) {
@@ -38,6 +37,19 @@ function rentPinLabel(value: number | null | undefined) {
   return amount ? `${amount} CHF` : 'n/a';
 }
 
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeAttribute(value: unknown) {
+  return escapeHtml(value);
+}
+
 function clusterPriceLabel(items: Listing[]) {
   const prices = items
     .map((item) => item.totalChf)
@@ -51,20 +63,62 @@ function clusterPriceLabel(items: Listing[]) {
   return `${min.toLocaleString('fr-CH')}-${max.toLocaleString('fr-CH')} CHF`;
 }
 
-function markerHtml(item: Listing, selected: boolean) {
+function previewTitle(item: Listing) {
+  const rawTitle = typeof item.title === 'string' ? item.title.trim() : '';
+  return rawTitle || listingTitle(item);
+}
+
+function markerHtml(item: Listing) {
   const classes = [
-    'atlas-map-pin',
-    item.mapLocation?.precision === 'area' ? 'is-approximate' : '',
-    selected ? 'is-selected' : ''
+    'atlas-map-pin-shell',
+    item.mapLocation?.precision === 'area' ? 'is-approximate' : ''
   ].filter(Boolean).join(' ');
-  return `<div class="atlas-map-pin-frame is-listing-pin"><div class="${classes}">${rentPinLabel(item.totalChf)}</div></div>`;
+  const title = previewTitle(item);
+  const urls = getImageUrls(item);
+  const media = urls.length
+    ? [
+        `<button class="atlas-map-popup-media" type="button" tabindex="-1" data-map-focusable data-map-action="lightbox" aria-label="${escapeAttribute(`Ouvrir les photos de ${title}`)}">`,
+        `<img src="${escapeAttribute(urls[0])}" alt="${escapeAttribute(`Aperçu ${title}`)}" loading="lazy" />`,
+        urls.length > 1 ? `<span class="atlas-map-popup-count">+${urls.length - 1}</span>` : '',
+        '</button>'
+      ].join('')
+    : '<div class="atlas-map-popup-media is-empty"><span>Sans photo</span></div>';
+  const meta = [money(item.totalChf), surfaceLabel(item)].filter(Boolean).join(' · ');
+  const location = item.address || item.area || 'Lieu non renseigné';
+  const commute = commuteLabel(item);
+  const source = listingSourceLabel(item);
+  const badges = [
+    source ? `<span>${escapeHtml(source)}</span>` : '',
+    item.mapLocation?.precision === 'area' ? '<span>Position approx.</span>' : ''
+  ].filter(Boolean).join('');
+  const link = item.url
+    ? `<a class="atlas-map-popup-link" href="${escapeAttribute(item.url)}" target="_blank" rel="noreferrer" tabindex="-1" data-map-focusable>Ouvrir l’annonce</a>`
+    : '';
+
+  return [
+    '<div class="atlas-map-pin-frame is-listing-pin">',
+    `<article class="${classes}" data-listing-id="${escapeAttribute(item.id)}">`,
+    `<div class="atlas-map-pin-price">${escapeHtml(rentPinLabel(item.totalChf))}</div>`,
+    '<div class="atlas-map-pin-preview atlas-map-popup" data-map-preview aria-hidden="true" inert>',
+    media,
+    '<div class="atlas-map-popup-body">',
+    `<h3 class="atlas-map-popup-title">${escapeHtml(title)}</h3>`,
+    meta ? `<p class="atlas-map-popup-meta is-strong">${escapeHtml(meta)}</p>` : '',
+    `<p class="atlas-map-popup-meta">${escapeHtml(location)}</p>`,
+    commute ? `<p class="atlas-map-popup-meta">${escapeHtml(commute)}</p>` : '',
+    badges ? `<div class="atlas-map-popup-badges">${badges}</div>` : '',
+    link,
+    '</div>',
+    '</div>',
+    '</article>',
+    '</div>'
+  ].join('');
 }
 
 function clusterHtml(cluster: ListingCluster) {
-  const classes = ['atlas-map-cluster', cluster.containsSelected ? 'is-selected' : ''].filter(Boolean).join(' ');
   return [
     '<div class="atlas-map-pin-frame">',
-    `<div class="${classes}">`,
+    '<div class="atlas-map-cluster">',
     `<span class="atlas-map-cluster-count">${cluster.items.length}</span>`,
     `<span class="atlas-map-cluster-label">${clusterPriceLabel(cluster.items)}</span>`,
     '</div>',
@@ -83,69 +137,6 @@ function commuteLabel(item: Listing) {
   return item.transitText || item.driveText || item.distanceText || '';
 }
 
-function appendText(parent: HTMLElement, tag: keyof HTMLElementTagNameMap, className: string, text: string) {
-  const el = document.createElement(tag);
-  el.className = className;
-  el.textContent = text;
-  parent.appendChild(el);
-  return el;
-}
-
-function popupContent(item: Listing, onOpenLightbox: (urls: string[], index: number) => void) {
-  const urls = getImageUrls(item);
-  const root = document.createElement('article');
-  root.className = 'atlas-map-popup';
-
-  const media = document.createElement(urls.length ? 'button' : 'div');
-  media.className = urls.length ? 'atlas-map-popup-media' : 'atlas-map-popup-media is-empty';
-  if (urls.length) {
-    media.type = 'button';
-    media.addEventListener('click', () => onOpenLightbox(urls, 0));
-    const image = document.createElement('img');
-    image.src = urls[0];
-    image.alt = `Aperçu ${listingTitle(item)}`;
-    image.loading = 'lazy';
-    media.appendChild(image);
-    if (urls.length > 1) appendText(media, 'span', 'atlas-map-popup-count', `+${urls.length - 1}`);
-  } else {
-    appendText(media, 'span', '', 'Sans photo');
-  }
-  root.appendChild(media);
-
-  const body = document.createElement('div');
-  body.className = 'atlas-map-popup-body';
-  appendText(body, 'h3', 'atlas-map-popup-title', listingTitle(item));
-
-  const meta = [money(item.totalChf), surfaceLabel(item)].filter(Boolean).join(' · ');
-  if (meta) appendText(body, 'p', 'atlas-map-popup-meta is-strong', meta);
-
-  const location = item.address || item.area || 'Lieu non renseigné';
-  appendText(body, 'p', 'atlas-map-popup-meta', location);
-
-  const commute = commuteLabel(item);
-  if (commute) appendText(body, 'p', 'atlas-map-popup-meta', commute);
-
-  const badges = document.createElement('div');
-  badges.className = 'atlas-map-popup-badges';
-  const source = listingSourceLabel(item);
-  if (source) appendText(badges, 'span', '', source);
-  if (item.mapLocation?.precision === 'area') appendText(badges, 'span', '', 'Position approx.');
-  if (badges.childElementCount) body.appendChild(badges);
-
-  if (item.url) {
-    const link = document.createElement('a');
-    link.className = 'atlas-map-popup-link';
-    link.href = item.url;
-    link.target = '_blank';
-    link.rel = 'noreferrer';
-    link.textContent = 'Ouvrir l’annonce';
-    body.appendChild(link);
-  }
-
-  root.appendChild(body);
-  return root;
-}
-
 function tileAttribution() {
   return import.meta.env.VITE_MAP_ATTRIBUTION || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 }
@@ -154,9 +145,8 @@ function tileUrl() {
   return import.meta.env.VITE_MAP_TILE_URL || 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 }
 
-function clusterListings(map: L.Map, listings: Listing[], selectedListingId: string | number | null) {
+function clusterListings(map: L.Map, listings: Listing[]) {
   const clusters: ListingCluster[] = [];
-  const selectedKey = selectedListingId == null ? null : String(selectedListingId);
 
   for (const item of listings) {
     const point = toValidLatLng(item.mapLocation);
@@ -181,8 +171,7 @@ function clusterListings(map: L.Map, listings: Listing[], selectedListingId: str
         latLng,
         layerPoint,
         latSum: latLng.lat,
-        lonSum: latLng.lng,
-        containsSelected: selectedKey === String(item.id)
+        lonSum: latLng.lng
       });
       continue;
     }
@@ -195,7 +184,6 @@ function clusterListings(map: L.Map, listings: Listing[], selectedListingId: str
       nearestCluster.lonSum / nearestCluster.items.length
     );
     nearestCluster.layerPoint = map.latLngToLayerPoint(nearestCluster.latLng);
-    nearestCluster.containsSelected = nearestCluster.containsSelected || selectedKey === String(item.id);
   }
 
   return clusters;
@@ -212,11 +200,30 @@ function fitClusterBounds(map: L.Map, points: L.LatLngTuple[]) {
   map.fitBounds(L.latLngBounds(points), { padding: [42, 42], maxZoom: 18 });
 }
 
+function setMarkerShellSelected(marker: L.Marker, selected: boolean) {
+  const shell = marker.getElement()?.querySelector<HTMLElement>('.atlas-map-pin-shell');
+  if (!shell) return;
+
+  shell.classList.toggle('is-selected', selected);
+  shell.classList.toggle('is-expanded', selected);
+  shell.setAttribute('aria-expanded', selected ? 'true' : 'false');
+  const preview = shell.querySelector<HTMLElement>('[data-map-preview]');
+  if (preview) {
+    preview.setAttribute('aria-hidden', selected ? 'false' : 'true');
+    preview.toggleAttribute('inert', !selected);
+  }
+  shell.querySelectorAll<HTMLElement>('[data-map-focusable]').forEach((element) => {
+    element.tabIndex = selected ? 0 : -1;
+  });
+  marker.setZIndexOffset(selected ? 240 : 0);
+}
+
 export function ApartmentMap({
   listings,
   workplace,
   selectedListingId,
   onSelectListing,
+  onClearSelection,
   onOpenLightbox,
   open
 }: {
@@ -224,6 +231,7 @@ export function ApartmentMap({
   workplace: Workplace;
   selectedListingId: string | number | null;
   onSelectListing: (id: string | number) => void;
+  onClearSelection: () => void;
   onOpenLightbox: (urls: string[], index: number) => void;
   open: boolean;
 }) {
@@ -234,7 +242,12 @@ export function ApartmentMap({
   const clusterMarkersRef = useRef<Map<string, L.Marker>>(new Map());
   const clusterPointsRef = useRef<Map<string, L.LatLngTuple[]>>(new Map());
   const lastViewportKeyRef = useRef<string | null>(null);
+  const callbacksRef = useRef({ onClearSelection, onOpenLightbox, onSelectListing });
   const [mapRenderKey, setMapRenderKey] = useState(0);
+
+  useEffect(() => {
+    callbacksRef.current = { onClearSelection, onOpenLightbox, onSelectListing };
+  }, [onClearSelection, onOpenLightbox, onSelectListing]);
 
   const visibleListings = useMemo(
     () => listings.filter((item) => toValidLatLng(item.mapLocation)),
@@ -254,6 +267,30 @@ export function ApartmentMap({
 
     return points.join('|');
   }, [listings, workplace]);
+
+  const markerDataKey = useMemo(() => {
+    const parts = [viewportKey];
+    for (const item of visibleListings) {
+      const urls = getImageUrls(item).join(',');
+      parts.push([
+        item.id,
+        item.title || '',
+        item.totalChf ?? '',
+        item.rooms ?? '',
+        item.surfaceM2 ?? '',
+        item.address || '',
+        item.area || '',
+        item.transitText || '',
+        item.driveText || '',
+        item.distanceText || '',
+        item.source || '',
+        item.url || '',
+        item.mapLocation?.precision || '',
+        urls
+      ].join('~'));
+    }
+    return parts.join('|');
+  }, [viewportKey, visibleListings]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -299,6 +336,22 @@ export function ApartmentMap({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map) return;
+
+    const clearSelection = (event: L.LeafletMouseEvent) => {
+      const target = event.originalEvent?.target instanceof Element ? event.originalEvent.target : null;
+      if (target?.closest('.atlas-map-pin-shell, .atlas-map-cluster')) return;
+      callbacksRef.current.onClearSelection();
+    };
+
+    map.on('click', clearSelection);
+    return () => {
+      map.off('click', clearSelection);
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
     const layer = markersRef.current;
     if (!map || !layer) return;
 
@@ -323,7 +376,7 @@ export function ApartmentMap({
       points.push(workPoint);
     }
 
-    for (const cluster of clusterListings(map, visibleListings, selectedListingId)) {
+    for (const cluster of clusterListings(map, visibleListings)) {
       if (cluster.items.length > 1) {
         const pointsInCluster = clusterPoints(cluster.items);
         const icon = L.divIcon({
@@ -336,7 +389,7 @@ export function ApartmentMap({
         const marker = L.marker(cluster.latLng, {
           icon,
           riseOnHover: true,
-          zIndexOffset: cluster.containsSelected ? 220 : 0
+          zIndexOffset: 0
         })
           .on('click', () => fitClusterBounds(map, pointsInCluster))
           .addTo(layer);
@@ -353,24 +406,24 @@ export function ApartmentMap({
       const item = cluster.items[0];
       const point = toValidLatLng(item.mapLocation);
       if (!point) continue;
-      const selected = String(item.id) === String(selectedListingId);
       const icon = L.divIcon({
         className: 'atlas-map-pin-wrap',
-        html: markerHtml(item, selected),
+        html: markerHtml(item),
         iconSize: undefined,
         iconAnchor: [0, 0],
         popupAnchor: [0, -18]
       });
-      const marker = L.marker(point, { icon, riseOnHover: true, zIndexOffset: selected ? 240 : 0 })
-        .on('click', () => onSelectListing(item.id))
-        .bindPopup(popupContent(item, onOpenLightbox), {
-          className: 'atlas-leaflet-popup',
-          closeButton: true,
-          maxWidth: 310,
-          minWidth: 240,
-          autoPanPadding: [24, 24]
-        })
+      const marker = L.marker(point, { icon, riseOnHover: true, zIndexOffset: 0 })
+        .on('click', () => callbacksRef.current.onSelectListing(item.id))
         .addTo(layer);
+
+      marker.getElement()?.addEventListener('click', (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target?.closest('[data-map-action="lightbox"]')) return;
+        L.DomEvent.stop(event);
+        callbacksRef.current.onOpenLightbox(getImageUrls(item), 0);
+      }, { capture: true });
+
       listingMarkersRef.current.set(String(item.id), marker);
       points.push(point);
     }
@@ -386,7 +439,14 @@ export function ApartmentMap({
         map.setView([46.52, 6.63], 11);
       }
     }
-  }, [mapRenderKey, onOpenLightbox, onSelectListing, selectedListingId, viewportKey, visibleListings, workplace]);
+  }, [mapRenderKey, markerDataKey, viewportKey]);
+
+  useEffect(() => {
+    const selectedKey = selectedListingId == null ? null : String(selectedListingId);
+    for (const [id, marker] of listingMarkersRef.current) {
+      setMarkerShellSelected(marker, selectedKey === id);
+    }
+  }, [mapRenderKey, markerDataKey, selectedListingId]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -403,9 +463,13 @@ export function ApartmentMap({
 
     const point = marker.getLatLng();
     if (!isValidCoordinate(point.lat, point.lng)) return;
-    map.panTo(point, { animate: true, duration: 0.35 });
-    marker.openPopup();
-  }, [open, selectedListingId, visibleListings]);
+    map.panInside(point, {
+      paddingTopLeft: [160, 340],
+      paddingBottomRight: [160, 32],
+      animate: true,
+      duration: 0.35
+    });
+  }, [mapRenderKey, markerDataKey, open, selectedListingId]);
 
   useEffect(() => {
     if (!open || !mapRef.current) return;

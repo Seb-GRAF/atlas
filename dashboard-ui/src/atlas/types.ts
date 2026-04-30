@@ -15,6 +15,36 @@ export type AtlasListingSource =
   | 'Retraites Populaires'
   | 'anibis.ch';
 
+export type CommuteRouteStatus =
+  | 'ok'
+  | 'missing-address'
+  | 'geocode-failed'
+  | 'route-failed'
+  | 'cached-stale'
+  | string;
+
+export type CommuteLeg = {
+  type: 'walk' | 'transit';
+  mode: string;
+  line: string;
+  label: string;
+  direction: string;
+  from: string;
+  to: string;
+  departureAt: string | null;
+  arrivalAt: string | null;
+  minutes: number | null;
+};
+
+export type TransitRoute = {
+  date: string;
+  arrivalTime: string;
+  departureAt: string | null;
+  arrivalAt: string | null;
+  products: string[];
+  legs: CommuteLeg[];
+};
+
 export type AtlasListing = {
   id: string;
   title: string;
@@ -38,6 +68,14 @@ export type AtlasListing = {
   transitText: string | null;
   driveText: string | null;
   distanceText: string | null;
+  driveMinutes: number | null;
+  transitMinutes: number | null;
+  driveRouteStatus: CommuteRouteStatus | null;
+  transitRouteStatus: CommuteRouteStatus | null;
+  transitRouteLabel: string | null;
+  transitRouteComputedAt: string | null;
+  transitRoute: TransitRoute | null;
+  commuteWarnings: string[];
 
   lat: number | null;
   lon: number | null;

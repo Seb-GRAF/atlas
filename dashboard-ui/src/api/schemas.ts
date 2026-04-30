@@ -70,6 +70,28 @@ export const ProfilePayloadSchema = z.object({
   preferences: PreferencesSchema
 });
 
+const CommuteLegSchema = z.object({
+  type: z.enum(['walk', 'transit']),
+  mode: z.string(),
+  line: z.string(),
+  label: z.string(),
+  direction: z.string(),
+  from: z.string(),
+  to: z.string(),
+  departureAt: z.string().nullable(),
+  arrivalAt: z.string().nullable(),
+  minutes: z.number().nullable()
+});
+
+const TransitRouteSchema = z.object({
+  date: z.string(),
+  arrivalTime: z.string(),
+  departureAt: z.string().nullable(),
+  arrivalAt: z.string().nullable(),
+  products: z.array(z.string()),
+  legs: z.array(CommuteLegSchema)
+});
+
 export const ListingSchema = z
   .object({
     id: z.union([z.string(), z.number()]),
@@ -108,6 +130,12 @@ export const ListingSchema = z
     distanceKm: z.number().nullable().optional(),
     transitMinutes: z.number().nullable().optional(),
     driveMinutes: z.number().nullable().optional(),
+    driveRouteStatus: z.string().nullable().optional(),
+    transitRouteStatus: z.string().nullable().optional(),
+    transitRouteLabel: z.string().nullable().optional(),
+    transitRouteComputedAt: z.string().nullable().optional(),
+    transitRoute: TransitRouteSchema.nullable().optional(),
+    commuteWarnings: z.array(z.string()).optional(),
     publishedAt: z.string().nullable().optional(),
     firstSeenAt: z.string().nullable().optional(),
     lastSeenAt: z.string().nullable().optional(),

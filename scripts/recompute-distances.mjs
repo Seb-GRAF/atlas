@@ -215,6 +215,7 @@ async function main() {
     await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
     await writeJson(ROUTE_CACHE_PATH, routeCache);
     console.log(`Marked ${tracker.listings.length} listings with workplace geocode failure`);
+    process.exitCode = 1;
     return;
   }
   console.log(`Work coords: ${workCoords.lat}, ${workCoords.lon}`);

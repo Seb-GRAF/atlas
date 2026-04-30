@@ -91,9 +91,18 @@ function haversineKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function sanitizeAddressPart(value = '') {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\bCH-\d{4}\b/gi, ' ')
+    .replace(/\bVD\b/gi, ' ')
+    .trim();
+}
+
 function buildListingAddressQuery(listing) {
-  const addressRaw = String(listing.address || '').trim();
-  const area = String(listing.area || '').trim();
+  const addressRaw = sanitizeAddressPart(listing.address);
+  const area = sanitizeAddressPart(listing.area);
   if (addressRaw) return [addressRaw, 'Suisse'].join(', ');
   if (area) return [area, 'Suisse'].join(', ');
   return '';

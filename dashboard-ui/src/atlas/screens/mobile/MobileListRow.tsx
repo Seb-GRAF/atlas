@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Icons, Mono, PhotoFrame, formatCHF } from '../../components';
 import type { AtlasListing } from '../../types';
+import { CommuteChips } from '../CommuteChips';
 
 type MobileListRowProps = {
   listing: AtlasListing;
@@ -137,12 +138,9 @@ export function MobileListRow({ listing, onSelect }: MobileListRowProps) {
             <Icons.Square size={12} stroke={1.7} /> {listing.surfaceM2} m²
           </span>
         ) : null}
-        {listing.transitText ? (
-          <span style={metaItem}>
-            <Icons.Train size={12} stroke={1.7} /> {listing.transitText}
-          </span>
-        ) : null}
       </div>
+
+      <CommuteChips listing={listing} compact style={{ marginTop: 6 }} />
     </button>
   );
 }

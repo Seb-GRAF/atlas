@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Icons, Mono, formatCHF } from '../components';
 import type { AtlasListing } from '../types';
+import { CommuteChips } from './CommuteChips';
 
 type ListingRowProps = {
   listing: AtlasListing;
@@ -21,8 +22,7 @@ export function ListingRow({ listing, selected, onSelect }: ListingRowProps) {
   const cover = listing.images[0];
   const meta = [
     listing.rooms != null ? `${listing.rooms} pces` : null,
-    listing.surfaceM2 != null ? `${listing.surfaceM2} m²` : null,
-    listing.transitText
+    listing.surfaceM2 != null ? `${listing.surfaceM2} m²` : null
   ]
     .filter(Boolean)
     .join(' · ');
@@ -128,6 +128,8 @@ export function ListingRow({ listing, selected, onSelect }: ListingRowProps) {
           >
             {meta || '—'}
           </div>
+
+          <CommuteChips listing={listing} compact style={{ marginTop: 3 }} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
             {listing.totalChf != null ? (

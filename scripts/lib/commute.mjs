@@ -68,9 +68,18 @@ export function buildTransitCacheKey(from, to) {
   return `transit:${TRANSIT_POLICY.cachePolicyKey}:${normalizeAddressKey(from)}->${normalizeAddressKey(to)}`;
 }
 
+function formatCoordinatePoint(point) {
+  const lat = Number(point?.lat);
+  const lon = Number(point?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    throw new Error('Invalid route coordinates');
+  }
+  return `${lat.toFixed(5)},${lon.toFixed(5)}`;
+}
+
 export function buildDriveCacheKey(fromCoords, toCoords) {
-  const one = `${Number(fromCoords.lat).toFixed(5)},${Number(fromCoords.lon).toFixed(5)}`;
-  const two = `${Number(toCoords.lat).toFixed(5)},${Number(toCoords.lon).toFixed(5)}`;
+  const one = formatCoordinatePoint(fromCoords);
+  const two = formatCoordinatePoint(toCoords);
   return `drive:${one}->${two}`;
 }
 
@@ -199,6 +208,9 @@ export function clearCommuteFields(item) {
 }
 
 export function setCommuteFailureFields(item, status, message) {
+  item.driveMinutes = null;
+  item.driveText = '';
+  item.driveRouteStatus = status;
   item.transitRouteStatus = status;
   item.transitRouteLabel = TRANSIT_POLICY.label;
   item.transitRouteComputedAt = new Date().toISOString();
@@ -220,11 +232,11 @@ export function setCommuteSuccessFields(item, result) {
 
   item.driveMinutes = driveMinutes;
   item.driveText = formatMinutesText(driveMinutes);
-  item.driveRouteStatus = driveMinutes == null ? 'route-failed' : 'ok';
+  item.driveRouteStatus = result.driveStatus || (driveMinutes == null ? 'route-failed' : 'ok');
 
   item.transitMinutes = transitMinutes;
   item.transitText = formatMinutesText(transitMinutes);
-  item.transitRouteStatus = transitMinutes == null ? 'route-failed' : 'ok';
+  item.transitRouteStatus = result.transitStatus || (transitMinutes == null ? 'route-failed' : 'ok');
   item.transitRouteLabel = TRANSIT_POLICY.label;
   item.transitRouteComputedAt = new Date().toISOString();
   item.transitRoute = result.transitRoute || null;

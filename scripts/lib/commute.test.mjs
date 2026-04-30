@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
   formatMinutesText,
+  getCachedRoute,
+  isCacheFresh,
   normalizeTransitConnection,
   parseTransportDurationToMinutes,
   resolveNextMondayDateIso,
+  setCachedRoute,
   setCommuteFailureFields,
   setCommuteSuccessFields
 } from './commute.mjs';
@@ -30,6 +34,71 @@ test('buildTransitCacheKey includes arrival policy and normalized addresses', ()
     buildTransitCacheKey('Rue A 1, Suisse', 'Rue B 2, Suisse'),
     'transit:arrival-next-monday-0800:rue a 1, suisse->rue b 2, suisse'
   );
+});
+
+test('buildDriveCacheKey formats coordinates and rejects invalid points', () => {
+  assert.equal(
+    buildDriveCacheKey({ lat: 46.123456, lon: 6.987654 }, { lat: 47.1, lon: 7.2 }),
+    'drive:46.12346,6.98765->47.10000,7.20000'
+  );
+
+  assert.throws(
+    () => buildDriveCacheKey({ lat: Number.NaN, lon: 6.987654 }, { lat: 47.1, lon: 7.2 }),
+    /Invalid route coordinates/
+  );
+  assert.throws(
+    () => buildDriveCacheKey(null, { lat: 47.1, lon: 7.2 }),
+    /Invalid route coordinates/
+  );
+});
+
+test('cache helpers store normalized route entries and report freshness', () => {
+  const routeCache = {};
+  const route = { legs: [{ type: 'drive', minutes: 32 }] };
+
+  setCachedRoute(routeCache, 'drive:a->b', {
+    minutes: 31.6,
+    route,
+    status: 'cached-stale'
+  });
+
+  const entry = routeCache['drive:a->b'];
+  assert.equal(entry.minutes, 32);
+  assert.equal(entry.route, route);
+  assert.equal(entry.status, 'cached-stale');
+  assert.match(entry.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  assert.equal(isCacheFresh(null, 1000), false);
+  assert.equal(isCacheFresh({ updatedAt: new Date(Date.now() - 2000).toISOString() }, 1000), false);
+  assert.equal(isCacheFresh({ updatedAt: new Date().toISOString() }, 1000), true);
+
+  assert.deepEqual(getCachedRoute(routeCache, 'missing', 1000), {
+    hasValue: false,
+    fresh: false,
+    entry: null,
+    minutes: null,
+    route: null
+  });
+
+  assert.deepEqual(getCachedRoute(routeCache, 'drive:a->b', 1000), {
+    hasValue: true,
+    fresh: true,
+    entry,
+    minutes: 32,
+    route
+  });
+
+  routeCache['drive:old->b'] = {
+    minutes: 28.2,
+    route: { legs: [] },
+    status: 'ok',
+    updatedAt: new Date(Date.now() - 2000).toISOString()
+  };
+  const stale = getCachedRoute(routeCache, 'drive:old->b', 1000);
+  assert.equal(stale.hasValue, true);
+  assert.equal(stale.fresh, false);
+  assert.equal(stale.minutes, 28);
+  assert.deepEqual(stale.route, { legs: [] });
 });
 
 test('normalizeTransitConnection converts walk and transport sections into route legs', () => {
@@ -132,9 +201,28 @@ test('setCommuteSuccessFields writes compatibility and structured fields', () =>
   assert.deepEqual(listing.commuteWarnings, []);
 });
 
+test('setCommuteSuccessFields preserves explicit route statuses', () => {
+  const listing = {};
+  setCommuteSuccessFields(listing, {
+    workAddress: 'Rue Etraz 4, Lausanne',
+    distanceKm: 12.4,
+    driveMinutes: 31,
+    driveStatus: 'cached-stale',
+    transitMinutes: 42,
+    transitStatus: 'cached-stale',
+    transitRoute: null
+  });
+
+  assert.equal(listing.driveRouteStatus, 'cached-stale');
+  assert.equal(listing.transitRouteStatus, 'cached-stale');
+});
+
 test('setCommuteFailureFields is visible and clearCommuteFields resets old values', () => {
-  const listing = { driveText: '31 min', transitText: '42 min', commuteWarnings: [] };
+  const listing = { driveMinutes: 31, driveText: '31 min', transitText: '42 min', commuteWarnings: [] };
   setCommuteFailureFields(listing, 'route-failed', 'Transport public indisponible');
+  assert.equal(listing.driveMinutes, null);
+  assert.equal(listing.driveText, '');
+  assert.equal(listing.driveRouteStatus, 'route-failed');
   assert.equal(listing.transitRouteStatus, 'route-failed');
   assert.deepEqual(listing.commuteWarnings, ['Transport public indisponible']);
 

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   applyScanProgressEvent,
   createInitialScanProgress,
+  formatScanFailureMessage,
   publicScanProgress
 } from './lib/scan-progress.mjs';
 import { isStub } from './lib/dedup.mjs';
@@ -464,6 +465,17 @@ function makeDefaultConfig(profile, base = null) {
       delete copy.filters.maxPearlTotalChf;
       delete copy.filters.pearl;
     }
+    copy.sources = {
+      ...(copy.sources || {}),
+      facebookMarketplace: !!copy.sources?.facebookMarketplace
+    };
+    copy.facebookMarketplace = {
+      maxScrollsPerSearch: 4,
+      maxListingsPerSearch: 60,
+      searchUrls: [],
+      ...(copy.facebookMarketplace || {})
+    };
+    delete copy.facebookMarketplace.queryTemplates;
     return copy;
   }
 
@@ -480,7 +492,13 @@ function makeDefaultConfig(profile, base = null) {
       bernardNicod: true,
       retraitesListings: true,
       retraitesProjets: true,
-      anibis: false
+      anibis: false,
+      facebookMarketplace: false
+    },
+    facebookMarketplace: {
+      maxScrollsPerSearch: 4,
+      maxListingsPerSearch: 60,
+      searchUrls: []
     },
     flatfox: { maxPagesPerArea: 3, recheckKnownIdsLimit: 20 },
     filters: {
@@ -912,7 +930,7 @@ function createScanJob(profile) {
         job.currentMessage = job.currentStep;
       } else {
         job.status = 'error';
-        job.error = err.message;
+        job.error = formatScanFailureMessage(job.sources, err);
         job.currentStep = 'Scan interrompu';
         job.currentMessage = job.currentStep;
       }
@@ -1073,6 +1091,13 @@ function buildConfigFromPayload(payload, base = null) {
   const sources = payload.sources || {};
   const preferences = payload.preferences || {};
   const existingFilters = stripRetiredBudgetBypassFilters(existing.filters || {});
+  const facebookMarketplace = {
+    maxScrollsPerSearch: 4,
+    maxListingsPerSearch: 60,
+    searchUrls: [],
+    ...(existing.facebookMarketplace || {})
+  };
+  delete facebookMarketplace.queryTemplates;
 
   const maxPublishedAgeRaw = filters.maxPublishedAgeDays;
   const maxPublishedAgeDays =
@@ -1094,8 +1119,10 @@ function buildConfigFromPayload(payload, base = null) {
       bernardNicod: sources.bernardNicod !== false,
       retraitesListings: sources.retraitesListings !== false,
       retraitesProjets: sources.retraitesProjets !== false,
-      anibis: !!sources.anibis
+      anibis: !!sources.anibis,
+      facebookMarketplace: !!sources.facebookMarketplace
     },
+    facebookMarketplace,
     flatfox: {
       maxPagesPerArea: 3,
       recheckKnownIdsLimit: 20,

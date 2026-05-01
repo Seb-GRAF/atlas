@@ -1,7 +1,7 @@
 export { Hairline } from './Hairline';
 export { GlassPill } from './GlassPill';
 export { GlassPanel } from './GlassPanel';
-export { SourceMono, ATLAS_SOURCE_GLYPH } from './SourceMono';
+export { SourceMono, ATLAS_SOURCE_GLYPH, ATLAS_SOURCE_FAVICON } from './SourceMono';
 export { StatusPill } from './StatusPill';
 export type { StatusTone } from './StatusPill';
 export { PhotoFrame } from './PhotoFrame';

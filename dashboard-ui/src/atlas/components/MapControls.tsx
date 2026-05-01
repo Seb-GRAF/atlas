@@ -179,6 +179,15 @@ export function MapControls({
                 setPopoverOpen(false);
               }}
             />
+            <BasemapOption
+              label="Relief"
+              hint="Bâtiments en 3D"
+              selected={basemap === 'relief'}
+              onClick={() => {
+                onBasemapChange?.('relief');
+                setPopoverOpen(false);
+              }}
+            />
           </div>
         ) : null}
       </div>

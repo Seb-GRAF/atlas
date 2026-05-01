@@ -67,16 +67,6 @@ export function ListPanel({
       <div style={{ padding: '16px 18px 12px', minWidth: 0 }}>
         <div
           style={{
-            ...eyebrowStyle,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis'
-          }}
-        >
-          {formatZones(zones)}
-        </div>
-        <div
-          style={{
             display: 'flex',
             alignItems: 'flex-start',
             justifyContent: 'space-between',
@@ -100,7 +90,7 @@ export function ListPanel({
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-end',
-              gap: 2
+              gap: 6
             }}
           >
             <SortMenu sort={sort} onChange={onSortChange} align="right" />

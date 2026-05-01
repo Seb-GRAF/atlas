@@ -105,7 +105,9 @@ const COLOR = {
   roadLabel: '#7a6d57',
   roadLabelHalo: 'rgba(255,248,238,0.9)',
   satelliteLabel: '#ffffff',
-  satelliteLabelHalo: 'rgba(0,0,0,0.55)'
+  satelliteLabelHalo: 'rgba(0,0,0,0.55)',
+  building: '#e3d6bb',
+  buildingShade: '#cdbb98'
 };
 
 function buildVectorWarmStyle(): StyleSpecification {
@@ -376,8 +378,63 @@ function buildSatelliteStyle(): StyleSpecification {
   };
 }
 
+// Relief mode = warm vector style + flat building footprints + extruded buildings.
+// Heights come from OSM via Protomaps' `buildings` layer (`height` in meters,
+// `min_height` for stacked structures). Coverage is patchy in residential areas
+// — buildings without height data simply don't extrude, which degrades gracefully.
+function buildReliefStyle(): StyleSpecification {
+  const base = buildVectorWarmStyle();
+  return {
+    ...base,
+    layers: [
+      ...base.layers,
+      // Flat footprint fill, zoom 13 → 14. The 3D layer takes over from 14
+      // upward, so we fade this out to avoid double-painting.
+      {
+        id: 'buildings-flat',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'buildings',
+        minzoom: 13,
+        maxzoom: 14.5,
+        paint: {
+          'fill-color': COLOR.building,
+          'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 14, 0.6, 14.5, 0]
+        }
+      },
+      {
+        id: 'buildings-3d',
+        type: 'fill-extrusion',
+        source: 'protomaps',
+        'source-layer': 'buildings',
+        minzoom: 14,
+        paint: {
+          // `interpolate` returns the layer's default color (black) when its
+          // input expression evaluates to null — which happens for any building
+          // missing the `height` property. Coalesce to a sensible default so
+          // those buildings get a real color from the gradient.
+          'fill-extrusion-color': [
+            'interpolate',
+            ['linear'],
+            ['coalesce', ['get', 'height'], 8],
+            0, COLOR.building,
+            40, COLOR.buildingShade
+          ],
+          // OSM coverage of `height` is incomplete — coalesce missing heights
+          // to a small default so we still get *some* relief.
+          'fill-extrusion-height': ['coalesce', ['get', 'height'], 4],
+          'fill-extrusion-base': ['coalesce', ['get', 'min_height'], 0],
+          'fill-extrusion-opacity': 0.9
+        }
+      }
+    ]
+  };
+}
+
 function buildStyleFor(basemap: Basemap): StyleSpecification {
-  return basemap === 'satellite' ? buildSatelliteStyle() : buildVectorWarmStyle();
+  if (basemap === 'satellite') return buildSatelliteStyle();
+  if (basemap === 'relief') return buildReliefStyle();
+  return buildVectorWarmStyle();
 }
 
 const DEFAULT_CENTER = { lat: 46.47, lon: 6.84, zoom: 11 };
@@ -772,11 +829,15 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Swap basemap style (vector ↔ satellite) without recreating the map. After
-  // setStyle fires the previous sources/layers are gone, so we clear the route
-  // bookkeeping and bump styleTick to make the route-overlay effect re-attach
-  // its source + layers on top of the new style. DOM markers (pins, workplace,
-  // route badges) are MapLibre Markers that survive setStyle automatically.
+  // Swap basemap style (vector / satellite / relief) without recreating the
+  // map. After setStyle the previous sources/layers are gone, so we clear the
+  // route bookkeeping and bump styleTick to make the route-overlay effect
+  // re-attach its source + layers on top of the new style. DOM markers (pins,
+  // workplace, route badges) are MapLibre Markers that survive setStyle
+  // automatically.
+  //
+  // Relief mode also tilts the camera so the extruded buildings actually read
+  // as 3D; switching away resets pitch/bearing.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
@@ -787,6 +848,16 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       // route effect re-add layers — adding to an unloaded style throws.
       if (!map.isStyleLoaded()) return;
       map.off('styledata', onStyleData);
+      if (basemap === 'relief') {
+        map.easeTo({
+          pitch: 55,
+          bearing: -17,
+          zoom: Math.max(map.getZoom(), 15),
+          duration: 600
+        });
+      } else if (map.getPitch() !== 0 || map.getBearing() !== 0) {
+        map.easeTo({ pitch: 0, bearing: 0, duration: 450 });
+      }
       setStyleTick((n) => n + 1);
     };
     map.on('styledata', onStyleData);

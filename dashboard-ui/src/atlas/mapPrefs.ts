@@ -1,10 +1,12 @@
-export type Basemap = 'vector' | 'satellite';
+export type Basemap = 'vector' | 'satellite' | 'relief';
 
 const STORAGE_KEY = 'atlas-basemap';
 
 export function loadBasemap(): Basemap {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === 'satellite' ? 'satellite' : 'vector';
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw === 'satellite' || raw === 'relief') return raw;
+    return 'vector';
   } catch {
     return 'vector';
   }

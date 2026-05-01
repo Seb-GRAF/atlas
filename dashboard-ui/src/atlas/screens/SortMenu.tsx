@@ -47,7 +47,9 @@ export function SortMenu({ sort, onChange, buttonStyle, align = 'right' }: SortM
     cursor: 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 4
+    gap: 4,
+    padding: 0,
+    marginInlineEnd: -6
   };
 
   const menuStyle: CSSProperties = {

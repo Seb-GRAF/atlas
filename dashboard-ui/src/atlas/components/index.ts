@@ -5,7 +5,6 @@ export { SourceMono, ATLAS_SOURCE_GLYPH } from './SourceMono';
 export { StatusPill } from './StatusPill';
 export type { StatusTone } from './StatusPill';
 export { PhotoFrame } from './PhotoFrame';
-export { LightboxProvider, useLightbox } from './Lightbox';
 export { AtlasMap } from './AtlasMap';
 export type { AtlasMapPin, AtlasMapHandle } from './AtlasMap';
 export { MapControls } from './MapControls';

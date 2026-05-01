@@ -13,6 +13,7 @@ import { MobileTabBar, type MobileTab } from './MobileTabBar';
 import { FiltersSheet } from './FiltersSheet';
 import { UndoToast } from '../UndoToast';
 import { usePendingDismissals } from '../usePendingDismissals';
+import { getActiveProfileSlug } from '../../profileRouting';
 
 type Mode = 'list' | 'map' | 'detail';
 
@@ -26,10 +27,11 @@ const rootStyle: CSSProperties = {
 };
 
 export function MobileShell() {
-  const { listings, profile, isLoading, error } = useAtlasState();
-  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations();
+  const activeProfileSlug = getActiveProfileSlug();
+  const { listings, profile, isLoading, error } = useAtlasState(activeProfileSlug);
+  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations(profile.slug, activeProfileSlug);
   const [urlState, updateUrl] = useAtlasUrlState();
-  const { scan, jobId, start: startScan, cancel: cancelScan } = useScan();
+  const { scan, jobId, start: startScan, cancel: cancelScan } = useScan(activeProfileSlug);
 
   const [mode, setMode] = useState<Mode>(urlState.listing ? 'detail' : 'list');
   // Tracks the screen behind the sheet so the user returns to it on close.

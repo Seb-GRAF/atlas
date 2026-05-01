@@ -323,7 +323,7 @@ function renderProfiles(profiles) {
       ? new Date(p.lastScanAt).toLocaleString('fr-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
       : 'Jamais';
 
-    const profileUrl = `/${encodeURIComponent(p.slug)}/dashboard`;
+    const profileUrl = `/?profile=${encodeURIComponent(p.slug)}`;
 
     card.innerHTML = `
       <a href="${profileUrl}" class="card-link">
@@ -514,4 +514,7 @@ async function resumeScanIfNeeded() {
   }
 }
 
-loadProfiles().then(() => resumeScanIfNeeded());
+loadProfiles().then(() => {
+  if (window.location.hash === '#create') showForm('create');
+  return resumeScanIfNeeded();
+});

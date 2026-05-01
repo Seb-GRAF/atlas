@@ -7,7 +7,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://127.0.0.1:8787',
-      '/data': 'http://127.0.0.1:8787'
+      '/data': 'http://127.0.0.1:8787',
+      '/dashboard': 'http://127.0.0.1:8787'
     }
   },
   build: {

@@ -19,6 +19,7 @@ import { MobileShell } from './mobile/MobileShell';
 import type { AtlasListing, AtlasListingStatus, AtlasProfile, RouteOverlay } from '../types';
 import type { ScanJob } from '../../api/schemas';
 import { buildTransitRouteOverlay } from '../data/routeViz';
+import { buildProfileDashboardUrl, getActiveProfileSlug } from '../profileRouting';
 
 const VEVEY_FALLBACK = { lat: 46.47, lon: 6.84, zoom: 11 };
 const MOBILE_BREAKPOINT = 768;
@@ -44,10 +45,11 @@ export function AtlasShell() {
 }
 
 function DesktopShell() {
-  const { listings, profile, isLoading, error } = useAtlasState();
-  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations();
+  const activeProfileSlug = getActiveProfileSlug();
+  const { listings, profile, isLoading, error } = useAtlasState(activeProfileSlug);
+  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations(profile.slug, activeProfileSlug);
   const [urlState, updateUrl] = useAtlasUrlState();
-  const { scan, start: startScan, cancel: cancelScan } = useScan();
+  const { scan, start: startScan, cancel: cancelScan } = useScan(activeProfileSlug);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const mapHandle = useRef<AtlasMapHandle>(null);
   const [routeOverlay, setRouteOverlay] = useState<RouteOverlay | null>(null);
@@ -254,6 +256,7 @@ function DesktopShell() {
       </div>
 
       <TopBar
+        profileSlug={activeProfileSlug ?? profile.slug}
         profileTitle={profile.shortTitle}
         zones={profile.zones}
         query=""
@@ -266,6 +269,9 @@ function DesktopShell() {
         onOpenSettings={() => setSettingsOpen(true)}
         onScan={() => startScan()}
         scanning={scanRunning}
+        onProfileSelect={(slug) => {
+          window.location.href = buildProfileDashboardUrl(slug);
+        }}
       />
 
       <ListPanel

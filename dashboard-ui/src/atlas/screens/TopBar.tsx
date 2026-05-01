@@ -1,8 +1,10 @@
-import type { CSSProperties } from 'react';
-import { GlassPill, AtlasButton, Hairline, Icons } from '../components';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { GlassPill, AtlasButton, Icons } from '../components';
 import type { AtlasStage, AtlasStageValue } from '../types';
+import { ProfileChooserMenu } from './ProfileChooserMenu';
 
 type TopBarProps = {
+  profileSlug: string;
   profileTitle: string;
   zones: string[];
   query: string;
@@ -13,6 +15,7 @@ type TopBarProps = {
   onOpenSettings: () => void;
   onScan: () => void;
   scanning: boolean;
+  onProfileSelect: (slug: string) => void;
 };
 
 const TOPBAR_STAGE_LABELS: Record<AtlasStageValue, string> = {
@@ -35,6 +38,7 @@ const containerStyle: CSSProperties = {
 };
 
 export function TopBar({
+  profileSlug,
   profileTitle,
   query,
   onQueryChange,
@@ -43,32 +47,74 @@ export function TopBar({
   onStageChange,
   onOpenSettings,
   onScan,
-  scanning
+  scanning,
+  onProfileSelect
 }: TopBarProps) {
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!profileMenuOpen) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (profileMenuRef.current?.contains(event.target as Node)) return;
+      setProfileMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileMenuOpen(false);
+    };
+
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [profileMenuOpen]);
+
   return (
     <div style={containerStyle}>
-      <GlassPill padding="6px 10px">
-        <span
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            background: 'var(--atlas-ink)',
-            color: '#fff',
-            display: 'grid',
-            placeItems: 'center',
-            fontFamily: 'var(--atlas-mono)',
-            fontSize: 11,
-            fontWeight: 600
-          }}
+      <div ref={profileMenuRef} style={{ position: 'relative' }}>
+        <GlassPill
+          as="button"
+          padding="6px 10px"
+          aria-label="Choisir un profil"
+          aria-expanded={profileMenuOpen}
+          onClick={() => setProfileMenuOpen((open) => !open)}
         >
-          A
-        </span>
-        <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--atlas-ink)' }}>Atlas</span>
-        <span style={{ width: 1, height: 16, background: 'var(--atlas-line)' }} />
-        <span style={{ fontSize: 13, color: 'var(--atlas-ink-2)' }}>{profileTitle}</span>
-        <Icons.ChevronDown size={12} stroke={1.6} style={{ color: 'var(--atlas-ink-3)' }} />
-      </GlassPill>
+          <span
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 6,
+              background: 'var(--atlas-ink)',
+              color: '#fff',
+              display: 'grid',
+              placeItems: 'center',
+              fontFamily: 'var(--atlas-mono)',
+              fontSize: 11,
+              fontWeight: 600
+            }}
+          >
+            A
+          </span>
+          <span style={{ fontWeight: 500, fontSize: 13, color: 'var(--atlas-ink)' }}>Atlas</span>
+          <span style={{ width: 1, height: 16, background: 'var(--atlas-line)' }} />
+          <span style={{ fontSize: 13, color: 'var(--atlas-ink-2)' }}>{profileTitle}</span>
+          <Icons.ChevronDown size={12} stroke={1.6} style={{ color: 'var(--atlas-ink-3)' }} />
+        </GlassPill>
+
+        {profileMenuOpen ? (
+          <ProfileChooserMenu
+            activeSlug={profileSlug}
+            onSelect={(slug) => {
+              setProfileMenuOpen(false);
+              onProfileSelect(slug);
+            }}
+            onClose={() => setProfileMenuOpen(false)}
+          />
+        ) : null}
+      </div>
 
       <GlassPill
         padding="6px 12px"

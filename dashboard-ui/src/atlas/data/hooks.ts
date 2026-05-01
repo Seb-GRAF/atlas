@@ -11,17 +11,19 @@ import type { ProfileDetail, ProfilePayload } from '../../api/schemas';
 import { adaptListings, adaptProfile } from './adapt';
 import type { AtlasListing, AtlasListingStatus, AtlasProfile } from '../types';
 
-const STATE_KEY = ['atlas', 'state'] as const;
-const PROFILE_KEY = ['atlas', 'profile'] as const;
+const SERVER_DEFAULT_SCOPE = 'server-default';
 
-export function useAtlasState() {
+export const stateKey = (profileSlug?: string) => ['atlas', 'state', profileSlug ?? SERVER_DEFAULT_SCOPE] as const;
+export const profileKey = (profileSlug?: string) => ['atlas', 'profile', profileSlug ?? SERVER_DEFAULT_SCOPE] as const;
+
+export function useAtlasState(profileSlug?: string) {
   const stateQuery = useQuery({
-    queryKey: STATE_KEY,
-    queryFn: () => getDashboardState()
+    queryKey: stateKey(profileSlug),
+    queryFn: () => getDashboardState(profileSlug)
   });
   const profileQuery = useQuery({
-    queryKey: PROFILE_KEY,
-    queryFn: () => getProfileDetail()
+    queryKey: profileKey(profileSlug),
+    queryFn: () => getProfileDetail(profileSlug)
   });
 
   const listings = useMemo<AtlasListing[]>(
@@ -71,43 +73,44 @@ export function buildProfilePayload(next: AtlasProfile, detail: ProfileDetail): 
   };
 }
 
-export function useAtlasMutations() {
+export function useAtlasMutations(profileSlug: string, queryProfileSlug?: string) {
   const qc = useQueryClient();
-  const profileSlug = qc.getQueryData<{ slug?: string }>(PROFILE_KEY)?.slug;
+  const scopedProfileKey = profileKey(queryProfileSlug);
+  const scopedStateKey = stateKey(queryProfileSlug);
 
   const setStatus = useMutation({
     mutationFn: ({ id, status, notes }: { id: string; status: AtlasListingStatus; notes?: string }) => {
-      if (!profileSlug) throw new Error('Profil non chargé');
+      if (!profileSlug || profileSlug === 'default') throw new Error('Profil non chargé');
       return updateListingStatus(profileSlug, id, status, notes ?? '');
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: STATE_KEY })
+    onSuccess: () => qc.invalidateQueries({ queryKey: scopedStateKey })
   });
 
   const togglePin = useMutation({
     mutationFn: (id: string) => {
-      if (!profileSlug) throw new Error('Profil non chargé');
+      if (!profileSlug || profileSlug === 'default') throw new Error('Profil non chargé');
       return toggleListingPin(profileSlug, id);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: STATE_KEY })
+    onSuccess: () => qc.invalidateQueries({ queryKey: scopedStateKey })
   });
 
   const dismiss = useMutation({
     mutationFn: (id: string) => {
-      if (!profileSlug) throw new Error('Profil non chargé');
+      if (!profileSlug || profileSlug === 'default') throw new Error('Profil non chargé');
       return deleteListing(profileSlug, id);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: STATE_KEY })
+    onSuccess: () => qc.invalidateQueries({ queryKey: scopedStateKey })
   });
 
   const saveProfile = useMutation({
     mutationFn: (next: AtlasProfile) => {
-      const detail = qc.getQueryData<ProfileDetail>(PROFILE_KEY);
+      const detail = qc.getQueryData<ProfileDetail>(scopedProfileKey);
       if (!detail) throw new Error('Profil non chargé');
       return updateProfile(buildProfilePayload(next, detail));
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: PROFILE_KEY });
-      qc.invalidateQueries({ queryKey: STATE_KEY });
+      qc.invalidateQueries({ queryKey: scopedProfileKey });
+      qc.invalidateQueries({ queryKey: scopedStateKey });
     }
   });
 

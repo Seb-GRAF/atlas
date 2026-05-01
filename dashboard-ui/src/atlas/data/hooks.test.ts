@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProfilePayload } from './hooks';
+import { buildProfilePayload, profileKey, stateKey } from './hooks';
 import type { ProfileDetail } from '../../api/schemas';
 import type { AtlasProfile } from '../types';
 
@@ -30,6 +30,13 @@ const profile: AtlasProfile = {
 };
 
 describe('buildProfilePayload', () => {
+  it('scopes query keys by profile slug', () => {
+    expect(stateKey('fribourg')).toEqual(['atlas', 'state', 'fribourg']);
+    expect(profileKey('fribourg')).toEqual(['atlas', 'profile', 'fribourg']);
+    expect(stateKey()).toEqual(['atlas', 'state', 'server-default']);
+    expect(profileKey()).toEqual(['atlas', 'profile', 'server-default']);
+  });
+
   it('persists edited areas and workplace address', () => {
     const payload = buildProfilePayload(profile, detail);
 

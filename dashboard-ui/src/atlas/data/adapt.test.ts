@@ -32,4 +32,21 @@ describe('adaptListing commute overlays', () => {
 
     expect(listing.transitRouteOverlay).toEqual(overlay);
   });
+
+  it('surfaces commutePending when commute is awaiting recompute', () => {
+    const pending = adaptListing({
+      id: 'listing-2',
+      address: 'Rue de la Gare 4',
+      area: 'Vevey',
+      commutePending: true
+    } as Listing);
+    expect(pending.commutePending).toBe(true);
+
+    const ready = adaptListing({
+      id: 'listing-3',
+      address: 'Rue du Lac 8',
+      area: 'Vevey'
+    } as Listing);
+    expect(ready.commutePending).toBe(false);
+  });
 });

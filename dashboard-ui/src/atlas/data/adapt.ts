@@ -179,7 +179,10 @@ export function adaptListing(item: ApiListing): AtlasListing {
     transitRouteComputedAt: item.transitRouteComputedAt ?? null,
     transitRoute: item.transitRoute ?? null,
     transitRouteOverlay: item.transitRouteOverlay ?? null,
-    commuteWarnings: Array.isArray(item.commuteWarnings) ? item.commuteWarnings : [],
+    commuteWarnings: Array.isArray(item.commuteWarnings)
+      ? item.commuteWarnings.filter((w) => !/approximatif/i.test(String(w)))
+      : [],
+    commutePending: !!item.commutePending,
     lat: item.mapLocation?.lat ?? null,
     lon: item.mapLocation?.lon ?? null,
     locationPrecision: item.mapLocation?.precision ?? null,

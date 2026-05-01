@@ -4,6 +4,7 @@ import {
   buildTransitRouteOverlay,
   buildDriveCacheKey,
   buildTransitCacheKey,
+  buildTransitLocationCacheKey,
   clearCommuteFields,
   formatMinutesText,
   formatTransitLocation,
@@ -54,6 +55,20 @@ test('buildTransitRouteOverlay uses transit coordinates directly without a resol
     bounds: [[6.6291, 46.4628], [6.8433, 46.5168]],
     failedCount: 0
   });
+});
+
+test('buildTransitLocationCacheKey uses coordinates when geocoding succeeded', () => {
+  const key = buildTransitLocationCacheKey(
+    { lat: 46.5293189, lon: 6.5598576 },
+    'route de la Pierre 5, 1024 Ecublens',
+    { lat: 46.5449867, lon: 6.6764565 },
+    'Hospital CHUV Centre Sylvana (VD) - Epalinges'
+  );
+
+  assert.equal(
+    key,
+    'transit:arrival-next-monday-0800:46.529319,6.559858->46.544987,6.676456'
+  );
 });
 
 test('buildTransitRouteOverlay resolves walk geometry with the injected foot resolver', async () => {
@@ -124,6 +139,46 @@ test('buildTransitRouteOverlay uses listing coordinates for a missing first walk
   assert.deepEqual(calls, [[[6.5804, 46.5362], [6.5786, 46.5378]]]);
   assert.deepEqual(overlay.legs[0].coords, [[6.5804, 46.5362], [6.5790, 46.5370], [6.5786, 46.5378]]);
   assert.equal(overlay.legs[0].failed, false);
+  assert.equal(overlay.failedCount, 0);
+});
+
+test('buildTransitRouteOverlay uses workplace coordinates for a missing last walk endpoint', async () => {
+  const calls = [];
+  const route = {
+    legs: [
+      {
+        type: 'transit',
+        mode: 'B',
+        label: 'B21',
+        from: 'Stop A',
+        to: 'Stop B',
+        minutes: 12,
+        coords: [[6.6400, 46.5200], [6.6450, 46.5250]]
+      },
+      {
+        type: 'walk',
+        mode: 'walk',
+        label: 'WALK',
+        from: 'Stop B',
+        to: 'Workplace address',
+        minutes: 5,
+        coords: [[6.6450, 46.5250]]
+      }
+    ]
+  };
+
+  const overlay = await buildTransitRouteOverlay(route, {
+    listingId: 'listing-5',
+    workplaceCoords: { lat: 46.5300, lon: 6.6500 },
+    async resolveFootRoute(fromLngLat, toLngLat) {
+      calls.push([fromLngLat, toLngLat]);
+      return [[6.6450, 46.5250], [6.6470, 46.5275], [6.6500, 46.5300]];
+    }
+  });
+
+  assert.deepEqual(calls, [[[6.6450, 46.5250], [6.6500, 46.5300]]]);
+  assert.deepEqual(overlay.legs[1].coords, [[6.6450, 46.5250], [6.6470, 46.5275], [6.6500, 46.5300]]);
+  assert.equal(overlay.legs[1].failed, false);
   assert.equal(overlay.failedCount, 0);
 });
 

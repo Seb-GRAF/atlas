@@ -5,8 +5,8 @@ import https from 'node:https';
 import { fileURLToPath } from 'node:url';
 import {
   buildTransitRouteOverlay,
+  buildTransitLocationCacheKey,
   buildDriveCacheKey,
-  buildTransitCacheKey,
   clearCommuteFields,
   formatTransitLocation,
   formatMinutesText,
@@ -94,6 +94,28 @@ function httpsGet(url) {
   });
 }
 
+async function httpsGetWithRetry(url, { retries = 3, baseDelayMs = 800 } = {}) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await httpsGet(url);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        // opendata.ch returns 429 when we hammer it; back off much harder than
+        // for generic transient errors so we don't fail in lockstep with the
+        // rate limit window.
+        const isRateLimit = /HTTP 429/.test(err.message || '');
+        const delay = isRateLimit
+          ? 5000 + 2000 * attempt
+          : baseDelayMs * Math.pow(2, attempt);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function geocodeAddress(query, cache) {
   return geocodeSwissAddress(query, cache, { fetchJson: httpsGet });
 }
@@ -133,7 +155,7 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
   }
 
   try {
-    const payload = await httpsGet(
+    const payload = await httpsGetWithRetry(
       `https://router.project-osrm.org/route/v1/driving/${listingCoords.lon},${listingCoords.lat};${workCoords.lon},${workCoords.lat}?overview=false`
     );
 
@@ -142,6 +164,7 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
     setCachedRoute(routeCache, key, { minutes, route: null, status: minutes == null ? 'route-failed' : 'ok' });
     return { minutes, status: minutes == null ? 'route-failed' : 'ok' };
   } catch (err) {
+    console.warn(`  drive fetch failed (${listingCoords.lat},${listingCoords.lon} -> ${workCoords.lat},${workCoords.lon}): ${err.message}`);
     if (cached.hasValue) return { minutes: cached.minutes, status: 'cached-stale' };
     return { minutes: null, status: 'route-failed', error: err.message };
   }
@@ -162,14 +185,15 @@ async function fetchFootRoute(fromLngLat, toLngLat, routeCache) {
   }
 
   try {
-    const payload = await httpsGet(
+    const payload = await httpsGetWithRetry(
       `https://router.project-osrm.org/route/v1/foot/${fromLngLat[0]},${fromLngLat[1]};${toLngLat[0]},${toLngLat[1]}?overview=full&geometries=geojson`
     );
     const coords = payload?.routes?.[0]?.geometry?.coordinates;
     const route = Array.isArray(coords) && coords.length >= 2 ? coords : null;
     setCachedRoute(routeCache, key, { minutes: null, route, status: route ? 'ok' : 'route-failed' });
     return route;
-  } catch {
+  } catch (err) {
+    console.warn(`  foot fetch failed (${fromLngLat[1]},${fromLngLat[0]} -> ${toLngLat[1]},${toLngLat[0]}): ${err.message}`);
     return Array.isArray(cached.route) && cached.route.length >= 2 ? cached.route : null;
   }
 }
@@ -180,9 +204,9 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
   }
 
   const transitRef = resolveTransitReference();
-  const key = buildTransitCacheKey(listingAddress, workAddress);
   const from = formatTransitLocation(listingCoords, listingAddress);
   const to = formatTransitLocation(workCoords, workAddress);
+  const key = buildTransitLocationCacheKey(listingCoords, listingAddress, workCoords, workAddress);
   const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
   if (cached.fresh && cached.minutes != null) {
     return { minutes: cached.minutes, route: cached.route, status: 'ok' };
@@ -197,7 +221,7 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
     url.searchParams.set('time', transitRef.arrivalTime);
     url.searchParams.set('isArrivalTime', '1');
 
-    const payload = await httpsGet(url.toString());
+    const payload = await httpsGetWithRetry(url.toString());
     const connection = payload?.connections?.[0] || null;
     const minutes = parseTransportDurationToMinutes(connection?.duration || '');
     const route = minutes == null ? null : normalizeTransitConnection(connection, transitRef);
@@ -210,6 +234,7 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
 
     return { minutes, route, status: minutes == null ? 'route-failed' : 'ok' };
   } catch (err) {
+    console.warn(`  transit fetch failed for "${listingAddress}" -> "${workAddress}": ${err.message}`);
     if (cached.hasValue) {
       return { minutes: cached.minutes, route: cached.route, status: 'cached-stale' };
     }
@@ -217,14 +242,41 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
   }
 }
 
+const PROGRESS_PREFIX = '__SCAN_PROGRESS__';
+
+function emitProgress(payload) {
+  console.log(`${PROGRESS_PREFIX}${JSON.stringify({ ...payload, at: new Date().toISOString() })}`);
+}
+
+function publicCommuteFields(listing) {
+  return {
+    distanceKm: listing.distanceKm ?? null,
+    distanceText: listing.distanceText ?? '',
+    driveMinutes: listing.driveMinutes ?? null,
+    driveText: listing.driveText ?? '',
+    driveRouteStatus: listing.driveRouteStatus ?? null,
+    transitMinutes: listing.transitMinutes ?? null,
+    transitText: listing.transitText ?? '',
+    transitRouteStatus: listing.transitRouteStatus ?? null,
+    transitRouteLabel: listing.transitRouteLabel ?? null,
+    transitRouteComputedAt: listing.transitRouteComputedAt ?? null,
+    transitRoute: listing.transitRoute ?? null,
+    transitRouteOverlay: listing.transitRouteOverlay ?? null,
+    commuteWarnings: Array.isArray(listing.commuteWarnings) ? listing.commuteWarnings : [],
+    distanceComputed: !!listing.distanceComputed,
+    distanceFromWorkAddress: listing.distanceFromWorkAddress ?? '',
+    commutePending: false
+  };
+}
+
 async function main() {
   console.log(`Recomputing distances for profile: ${PROFILE}`);
-  
+
   const config = await readJsonRequired(CONFIG_PATH);
   const tracker = await readJsonRequired(TRACKER_PATH);
   const geocodeCache = await readJsonSafe(GEOCODE_CACHE_PATH, {});
   const routeCache = await readJsonSafe(ROUTE_CACHE_PATH, {});
-  
+
   const workAddress = config.preferences?.workplaceAddress || config.preferences?.workAddress || DEFAULT_WORK_ADDRESS;
   const listings = Array.isArray(tracker.listings) ? tracker.listings : [];
   const commuteListings = listings.filter(shouldRecomputeListingCommute);
@@ -234,7 +286,16 @@ async function main() {
   if (skippedClosed > 0) {
     console.log(`Skipping ${skippedClosed} closed or removed listings`);
   }
-  
+
+  const total = commuteListings.length;
+  emitProgress({ type: 'commute:start', total, done: 0 });
+
+  const flushAll = async () => {
+    await writeJson(TRACKER_PATH, tracker);
+    await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
+    await writeJson(ROUTE_CACHE_PATH, routeCache);
+  };
+
   const workCoords = await geocodeAddress(workAddress, geocodeCache);
   if (!workCoords) {
     console.error('Could not geocode workplace address');
@@ -242,24 +303,35 @@ async function main() {
       clearCommuteFields(listing);
       setCommuteFailureFields(listing, 'geocode-failed', 'Trajet indisponible: adresse de travail non géocodée.');
       listing.distanceFromWorkAddress = workAddress || '';
+      listing.commutePending = false;
     }
-    await writeJson(TRACKER_PATH, tracker);
-    await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
-    await writeJson(ROUTE_CACHE_PATH, routeCache);
+    await flushAll();
     console.log(`Marked ${commuteListings.length} active listings with workplace geocode failure`);
+    emitProgress({ type: 'commute:done', total, done: total, error: 'workplace-geocode-failed' });
     process.exitCode = 1;
     return;
   }
   console.log(`Work coords: ${workCoords.lat}, ${workCoords.lon}`);
-  
+
   let updated = 0;
+  let processed = 0;
   for (const listing of commuteListings) {
     const listingAddress = buildListingAddressQuery(listing);
     if (!listingAddress) {
       clearCommuteFields(listing);
       setCommuteFailureFields(listing, 'missing-address', 'Trajet indisponible: adresse manquante.');
       listing.distanceFromWorkAddress = workAddress;
+      listing.commutePending = false;
       console.log(`  Skip ${listing.id}: missing address`);
+      processed += 1;
+      emitProgress({
+        type: 'commute:item',
+        id: String(listing.id),
+        done: processed,
+        total,
+        commute: publicCommuteFields(listing)
+      });
+      await flushAll();
       continue;
     }
 
@@ -268,10 +340,20 @@ async function main() {
       clearCommuteFields(listing);
       setCommuteFailureFields(listing, 'geocode-failed', 'Trajet indisponible: adresse non géocodée.');
       listing.distanceFromWorkAddress = workAddress;
+      listing.commutePending = false;
       console.log(`  Skip ${listing.id}: could not geocode "${listingAddress}"`);
+      processed += 1;
+      emitProgress({
+        type: 'commute:item',
+        id: String(listing.id),
+        done: processed,
+        total,
+        commute: publicCommuteFields(listing)
+      });
+      await flushAll();
       continue;
     }
-    
+
     const distanceKm = haversineKm(workCoords.lat, workCoords.lon, listingCoords.lat, listingCoords.lon);
     const drive = await fetchDrivingMinutes(workCoords, listingCoords, routeCache);
     const transit = await fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords, listingCoords);
@@ -279,6 +361,7 @@ async function main() {
       ? await buildTransitRouteOverlay(transit.route, {
           listingId: String(listing.id),
           listingCoords,
+          workplaceCoords: workCoords,
           resolveFootRoute: (fromLngLat, toLngLat) => fetchFootRoute(fromLngLat, toLngLat, routeCache)
         })
       : null;
@@ -297,22 +380,30 @@ async function main() {
       drive.status === 'cached-stale' ? 'Temps voiture issu du cache.' : '',
       transit.status === 'cached-stale' ? 'Trajet public issu du cache.' : '',
       drive.status === 'route-failed' ? 'Temps voiture indisponible.' : '',
-      transit.status === 'route-failed' ? 'Transport public indisponible.' : '',
-      transitRouteOverlay?.failedCount > 0 ? 'Tracé du trajet partiellement approximatif.' : ''
+      transit.status === 'route-failed' ? 'Transport public indisponible.' : ''
     ].filter(Boolean);
+    listing.commutePending = false;
 
     console.log(`  ${listing.id}: ${listing.distanceKm} km, ${formatMinutesText(drive.minutes) || '?'} drive`);
     updated++;
-    
+    processed += 1;
+    emitProgress({
+      type: 'commute:item',
+      id: String(listing.id),
+      done: processed,
+      total,
+      commute: publicCommuteFields(listing)
+    });
+    await flushAll();
+
     // Small delay to be nice to APIs
     await new Promise(r => setTimeout(r, 200));
   }
-  
-  await writeJson(TRACKER_PATH, tracker);
-  await writeJson(GEOCODE_CACHE_PATH, geocodeCache);
-  await writeJson(ROUTE_CACHE_PATH, routeCache);
-  
+
+  await flushAll();
+
   console.log(`\nDone! Updated ${updated}/${commuteListings.length} active listings`);
+  emitProgress({ type: 'commute:done', total, done: processed });
 }
 
 main().catch((err) => {

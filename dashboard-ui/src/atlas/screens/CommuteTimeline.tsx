@@ -17,6 +17,7 @@ type CommuteTimelineListing = Pick<
   | 'transitRoute'
   | 'transitRouteOverlay'
   | 'commuteWarnings'
+  | 'commutePending'
 >;
 
 type CommuteTimelineProps = {
@@ -98,7 +99,7 @@ function routeLabel(listing: CommuteTimelineListing): string | null {
 }
 
 function legLabel(leg: CommuteLeg): string {
-  if (leg.type === 'walk') return 'WALK';
+  if (leg.type === 'walk') return 'MARCHER';
   return leg.label || leg.line || leg.mode || 'PT';
 }
 
@@ -305,7 +306,12 @@ export function CommuteTimeline({ listing, onVisualize, visualizing, visualizing
     legs.length > 0 ||
     warnings.length > 0;
 
-  if (!hasData) return null;
+  if (!hasData) {
+    if (listing.commutePending) {
+      return <CommuteTimelinePending />;
+    }
+    return null;
+  }
 
   return (
     <section style={sectionStyle} aria-label="Trajet">
@@ -399,6 +405,62 @@ export function CommuteTimeline({ listing, onVisualize, visualizing, visualizing
           </div>
         </>
       ) : null}
+    </section>
+  );
+}
+
+const timelineSpinnerStyle: CSSProperties = {
+  width: 14,
+  height: 14,
+  borderRadius: '50%',
+  border: '2px solid var(--atlas-ember)',
+  borderTopColor: 'transparent',
+  animation: 'v2spin 0.7s linear infinite',
+  display: 'inline-block',
+  flexShrink: 0
+};
+
+const pendingSummaryStyle: CSSProperties = {
+  ...summaryStyle,
+  background:
+    'linear-gradient(90deg, var(--atlas-paper-2) 0%, rgba(214,69,69,0.10) 50%, var(--atlas-paper-2) 100%)',
+  backgroundSize: '320px 100%',
+  animation: 'atlas-shimmer 1.4s linear infinite',
+  color: 'var(--atlas-ember)',
+  boxShadow: '0 0 0 1px var(--atlas-ember)'
+};
+
+function CommuteTimelinePending() {
+  return (
+    <section style={sectionStyle} aria-label="Trajet" aria-busy>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        <span style={eyebrowStyle}>Trajet</span>
+        <span
+          role="status"
+          aria-label="Calcul du trajet en cours"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            color: 'var(--atlas-ember)',
+            fontSize: 12,
+            fontWeight: 500
+          }}
+        >
+          <span style={timelineSpinnerStyle} aria-hidden />
+          Calcul du trajet en cours…
+        </span>
+      </div>
+      <div style={summaryGridStyle}>
+        <div style={pendingSummaryStyle}>
+          <Icons.Train size={13} stroke={1.8} />
+          <Mono style={{ fontSize: 13, fontWeight: 500 }}>—</Mono>
+        </div>
+        <div style={pendingSummaryStyle}>
+          <Icons.Drive size={13} stroke={1.8} />
+          <Mono style={{ fontSize: 13, fontWeight: 500 }}>—</Mono>
+        </div>
+      </div>
     </section>
   );
 }

@@ -63,15 +63,35 @@ type AtlasMapProps = {
   routeOverlay?: RouteOverlay | null;
 };
 
-// Protomaps demo bucket — open vector tiles (OSM-derived) in their v4 schema.
-// MapLibre range-fetches the single .pmtiles archive via the pmtiles:// protocol.
-// No API key, no per-request quota. The demo bucket is fine for development;
-// for production point VITE_PMTILES_URL at a self-hosted or regional extract
-// (Switzerland is small — roughly 100 MB — and easily self-hostable).
-const DEFAULT_PMTILES_URL = 'https://demo-bucket.protomaps.com/v4.pmtiles';
+// Protomaps PMTiles archive — open vector tiles (OSM-derived) in their v4 schema.
+// MapLibre range-fetches the .pmtiles archive via the pmtiles:// protocol.
+//
+// Default: same-origin proxy at /maps/protomaps.pmtiles, served by
+// scripts/serve-dashboard.mjs (which forwards range requests to the protomaps
+// demo bucket). The demo bucket itself doesn't return CORS headers, which iOS
+// Safari rejects — desktop browsers tolerate it but iOS shows only the
+// satellite layer. Going through the proxy makes the request same-origin.
+//
+// Override with VITE_PMTILES_URL to point directly at a self-hosted or
+// regional extract (Switzerland is small — roughly 100 MB).
+const DEFAULT_PMTILES_URL = '/maps/protomaps.pmtiles';
 
-const PMTILES_URL: string =
-  (import.meta.env?.VITE_PMTILES_URL as string | undefined) || DEFAULT_PMTILES_URL;
+// Resolve relative URLs against the page origin. The pmtiles:// protocol
+// strips its scheme and hands the rest to fetch(), so a value like
+// "/maps/protomaps.pmtiles" needs to become an absolute URL before being
+// concatenated into "pmtiles://..." — otherwise we get the awkward
+// "pmtiles:///maps/..." triple-slash form.
+function resolvePmtilesUrl(input: string): string {
+  if (/^https?:\/\//i.test(input)) return input;
+  if (typeof window !== 'undefined' && window.location) {
+    return new URL(input, window.location.origin).toString();
+  }
+  return input;
+}
+
+const PMTILES_URL: string = resolvePmtilesUrl(
+  (import.meta.env?.VITE_PMTILES_URL as string | undefined) || DEFAULT_PMTILES_URL
+);
 
 const VECTOR_ATTRIBUTION =
   '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://protomaps.com">Protomaps</a>';
@@ -91,9 +111,12 @@ const GLYPHS_URL = 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack
 // feature class can be colored independently (no CSS filter wash).
 const COLOR = {
   earth: '#f0e8db',
-  water: '#dfe7ec',
-  park: '#e7ebd8',
-  forest: '#dde4cc',
+  // Water is held distinctly blue (vs. the muted greens of park/forest) so
+  // landmass and lakes don't read as the same surface. Don't push the
+  // saturation too high — the lake should feel calm, not loud.
+  water: '#cfdce5',
+  park: '#dee5c8',
+  forest: '#c8d4ad',
   built: '#ece2cf',
   roadMinor: '#fff8ee',
   roadMajorFill: '#ffffff',
@@ -155,12 +178,61 @@ function buildVectorWarmStyle(): StyleSpecification {
         minzoom: 11,
         paint: { 'fill-color': COLOR.built, 'fill-opacity': 0.65 }
       },
+      // Water polygons — oceans, lakes, reservoirs, canals, docks, basins.
+      // Filter is "any polygon that isn't a river/stream/riverbank" rather
+      // than a positive kind allowlist, because at low zoom Protomaps emits
+      // Lac Léman under the generic kind="water" (Natural Earth fallback),
+      // so ['in', kind, [ocean, lake]] would make the lake disappear when
+      // zoomed out. River/stream/riverbank polygons are excluded because in
+      // the demo bucket they're buffered floodplains that swallow city
+      // streets — rivers/streams are rendered separately as lines below.
       {
-        id: 'water',
+        id: 'water-fill',
         type: 'fill',
         source: 'protomaps',
         'source-layer': 'water',
+        filter: [
+          'all',
+          ['==', ['geometry-type'], 'Polygon'],
+          ['!', ['in', ['get', 'kind_detail'], ['literal', ['river', 'stream', 'riverbank']]]]
+        ],
         paint: { 'fill-color': COLOR.water }
+      },
+      // Rivers and streams — rendered as LINES only, not fills. The water
+      // source-layer has line geometry for waterways; using lines keeps
+      // streets and buildings visible underneath while still showing the
+      // watercourse.
+      {
+        id: 'water-river-line',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'water',
+        filter: [
+          'all',
+          ['==', ['geometry-type'], 'LineString'],
+          ['in', ['get', 'kind_detail'], ['literal', ['river', 'canal']]]
+        ],
+        minzoom: 10,
+        paint: {
+          'line-color': COLOR.water,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.4, 14, 1.2, 18, 3]
+        }
+      },
+      {
+        id: 'water-stream-line',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'water',
+        filter: [
+          'all',
+          ['==', ['geometry-type'], 'LineString'],
+          ['in', ['get', 'kind_detail'], ['literal', ['stream', 'ditch', 'drain']]]
+        ],
+        minzoom: 13,
+        paint: {
+          'line-color': COLOR.water,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.3, 18, 1.5]
+        }
       },
       {
         id: 'rail',
@@ -476,7 +548,12 @@ function PinButton({
           : '0 4px 14px rgba(22,20,15,.16), 0 0 0 1px rgba(22,20,15,.06)',
         transition:
           'transform 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease',
-        fontVariantNumeric: 'tabular-nums'
+        fontVariantNumeric: 'tabular-nums',
+        // Let multi-touch gestures (pinch-zoom) fall through to MapLibre's
+        // canvas. Without this, iOS Safari treats a second finger landing
+        // while the first is on the pin as a cancelled tap and never starts
+        // the pinch. Single-tap clicks still fire normally.
+        touchAction: 'none'
       }}
       title={approximate ? 'Position approximative' : undefined}
     >
@@ -533,7 +610,8 @@ function ClusterPin({
         cursor: 'pointer',
         boxShadow: '0 4px 14px rgba(22,20,15,.16), 0 0 0 1px rgba(22,20,15,.06)',
         transition: 'transform 140ms ease, box-shadow 140ms ease',
-        fontVariantNumeric: 'tabular-nums'
+        fontVariantNumeric: 'tabular-nums',
+        touchAction: 'none'
       }}
       title={`${count} annonces · cliquer pour zoomer`}
     >
@@ -760,6 +838,18 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
   // Effects that add MapLibre sources/layers (the route overlay) depend on this
   // so they re-add their content after `setStyle` blows the previous style away.
   const [styleTick, setStyleTick] = useState(0);
+  // When a cluster's members all share the exact same coordinate (typically
+  // address-less listings that fell back to the same town centroid), zooming
+  // can't separate them. Instead we "spiderfy" the cluster on click: render
+  // each member as its own marker offset radially in screen pixels, with a
+  // thin line back to the shared anchor. Stored as the anchor lat/lon plus
+  // the member list — pixel positions are recomputed every render so they
+  // track pan/zoom correctly.
+  const [spider, setSpider] = useState<{
+    anchorLat: number;
+    anchorLon: number;
+    members: AtlasMapPin[];
+  } | null>(null);
 
   const center = initialCenter ?? DEFAULT_CENTER;
 
@@ -902,6 +992,15 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     const groups = clusterPins(map, pins);
     const next = new Map<string, ManagedMarker>();
     const seen = new Set<string>();
+    // Reapply route-fade on every (re)cluster so freshly-created markers
+    // during a pan don't briefly render at full opacity. Clusters that
+    // contain the routed listing stay opaque.
+    const routeListingId = routeOverlay?.listingId ?? null;
+    const isDimmed = (group: PinGroup) => {
+      if (!routeListingId) return false;
+      if (group.kind === 'pin') return group.pin.id !== routeListingId;
+      return !group.members.some((m) => m.id === routeListingId);
+    };
 
     for (const group of groups) {
       seen.add(group.id);
@@ -909,6 +1008,10 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       if (existing) {
         existing.marker.setLngLat([group.lon, group.lat]);
         existing.group = group;
+        // MapLibre rewrites `el.style.opacity` on every internal _update
+        // (terrain occlusion path), so we have to go through the public
+        // setOpacity API or our value gets clobbered mid-pan.
+        existing.marker.setOpacity(isDimmed(group) ? '0.5' : '1');
         next.set(group.id, existing);
         continue;
       }
@@ -918,6 +1021,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([group.lon, group.lat])
         .addTo(map);
+      marker.setOpacity(isDimmed(group) ? '0.5' : '1');
       next.set(group.id, { marker, el, group });
     }
 
@@ -926,7 +1030,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     }
     markersRef.current = next;
     setRenderTick((n) => n + 1);
-  }, [pins, loaded, moveTick]);
+  }, [pins, loaded, moveTick, routeOverlay]);
 
   // Workplace marker.
   useEffect(() => {
@@ -983,28 +1087,87 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     type StopFeature = GeoJSON.Feature<GeoJSON.Point, { color: string }>;
     const lineFeatures: RouteFeature[] = [];
     const stopFeatures: StopFeature[] = [];
+    const isUsablePoint = (p: [number, number] | undefined) =>
+      Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]) && !(p[0] === 0 && p[1] === 0);
 
-    for (const leg of routeOverlay.legs) {
-      if (leg.coords.length < 2) continue;
+    // Recompute bounds from the *cleaned* leg coords. The stored
+    // routeOverlay.bounds field can be polluted by older overlays whose legs
+    // included a {0, 0} placeholder coord, which makes the map zoom out to
+    // span Switzerland → the equator.
+    let computedBounds: [[number, number], [number, number]] | null = null;
+    const expand = (point: [number, number]) => {
+      if (!computedBounds) {
+        computedBounds = [[point[0], point[1]], [point[0], point[1]]];
+        return;
+      }
+      const [[w, s], [e, n]] = computedBounds;
+      computedBounds = [
+        [Math.min(w, point[0]), Math.min(s, point[1])],
+        [Math.max(e, point[0]), Math.max(n, point[1])]
+      ];
+    };
+
+    // Find the listing pin so we can fall back to it for the first walk leg
+    // when the stored overlay only has the destination stop (older tracker
+    // data, or address-based opendata.ch results without a station coord).
+    const listingPin = pins.find((p) => p.id === routeOverlay.listingId);
+    const listingPoint: [number, number] | null =
+      listingPin && isUsablePoint([listingPin.lon, listingPin.lat])
+        ? [listingPin.lon, listingPin.lat]
+        : null;
+    const workplacePoint: [number, number] | null =
+      workplace && isUsablePoint([workplace.lon, workplace.lat])
+        ? [workplace.lon, workplace.lat]
+        : null;
+
+    const lastIdx = routeOverlay.legs.length - 1;
+    for (let i = 0; i < routeOverlay.legs.length; i++) {
+      const leg = routeOverlay.legs[i];
+      let cleanCoords = (leg.coords as [number, number][]).filter(isUsablePoint);
+      // Patch missing endpoints on the first/last walk legs using the listing
+      // or workplace pin. Keeps stale overlays renderable without a recompute.
+      if (leg.kind === 'walk' && cleanCoords.length < 2) {
+        if (i === 0 && listingPoint) {
+          cleanCoords = cleanCoords.length === 0
+            ? [listingPoint]
+            : [listingPoint, ...cleanCoords];
+        }
+        if (i === lastIdx && workplacePoint) {
+          cleanCoords = cleanCoords.length === 0
+            ? [workplacePoint]
+            : [...cleanCoords, workplacePoint];
+        }
+      }
+      if (cleanCoords.length < 2) continue;
+      for (const c of cleanCoords) expand(c);
       lineFeatures.push({
         type: 'Feature',
         properties: { kind: leg.kind, color: leg.color, failed: leg.failed },
-        geometry: { type: 'LineString', coordinates: leg.coords as [number, number][] }
+        geometry: { type: 'LineString', coordinates: cleanCoords }
       });
       stopFeatures.push({
         type: 'Feature',
         properties: { color: leg.color },
-        geometry: { type: 'Point', coordinates: leg.coords[0] as [number, number] }
+        geometry: { type: 'Point', coordinates: cleanCoords[0] }
       });
     }
     // Final stop (arrival of last leg).
     const lastLeg = routeOverlay.legs[routeOverlay.legs.length - 1];
-    if (lastLeg && lastLeg.coords.length > 0) {
-      stopFeatures.push({
-        type: 'Feature',
-        properties: { color: lastLeg.color },
-        geometry: { type: 'Point', coordinates: lastLeg.coords[lastLeg.coords.length - 1] as [number, number] }
-      });
+    if (lastLeg) {
+      let lastCoords = (lastLeg.coords as [number, number][]).filter(isUsablePoint);
+      // If the last leg is a walk and its destination was the {0,0} sentinel,
+      // append the workplace pin so the arrival dot lands at the office.
+      const rawLast = lastLeg.coords?.[lastLeg.coords.length - 1];
+      if (lastLeg.kind === 'walk' && workplacePoint && !isUsablePoint(rawLast)) {
+        lastCoords = [...lastCoords, workplacePoint];
+      }
+      if (lastCoords.length > 0) {
+        stopFeatures.push({
+          type: 'Feature',
+          properties: { color: lastLeg.color },
+          geometry: { type: 'Point', coordinates: lastCoords[lastCoords.length - 1] }
+        });
+      }
     }
 
     const lineFc: GeoJSON.FeatureCollection<GeoJSON.LineString> = { type: 'FeatureCollection', features: lineFeatures };
@@ -1076,11 +1239,12 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       routeBadgeMarkersRef.current = [];
       for (let i = 0; i < routeOverlay.legs.length; i++) {
         const leg = routeOverlay.legs[i];
-        if (leg.coords.length === 0) continue;
+        const cleanCoords = (leg.coords as [number, number][]).filter(isUsablePoint);
+        if (cleanCoords.length === 0) continue;
         // Show transit labels always; skip walk labels except at index 0.
         if (leg.kind === 'walk' && i !== 0) continue;
-        const startIdx = Math.floor(leg.coords.length / 2);
-        const [lng, lat] = leg.coords[startIdx];
+        const startIdx = Math.floor(cleanCoords.length / 2);
+        const [lng, lat] = cleanCoords[startIdx];
         const el = document.createElement('div');
         el.className = 'atlas-map-marker';
         el.style.pointerEvents = 'none';
@@ -1090,9 +1254,11 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
         routeBadgeMarkersRef.current.push({ marker, el, label: leg.label, color: leg.color });
       }
 
-      // Fit bounds to the route, padding for the right-side detail panel.
-      const [[w, s], [e, n]] = routeOverlay.bounds;
-      if (Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n)) {
+      // Fit bounds to the route, using the bounds we just recomputed from
+      // cleaned coords (not routeOverlay.bounds, which can contain {0, 0}
+      // pollution from older stored overlays).
+      if (computedBounds) {
+        const [[w, s], [e, n]] = computedBounds;
         const bounds = new LngLatBounds([w, s], [e, n]);
         const isWide = (map.getContainer().clientWidth || 0) >= 1024;
         map.fitBounds(bounds, {
@@ -1161,6 +1327,12 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     if (!map || !selectedId) return;
     const pin = pins.find((p) => p.id === selectedId);
     if (!pin || !isValidLatLon(pin.lat, pin.lon)) return;
+    // Close the spider unless the new selection is one of its members (i.e.
+    // the user just picked a spider pin — keep it open until it's mounted in
+    // its selected state, then the next selection change will collapse it).
+    if (spider && !spider.members.some((m) => m.id === selectedId)) {
+      setSpider(null);
+    }
     const run = () => {
       map.easeTo({
         center: [pin.lon, pin.lat],
@@ -1178,19 +1350,19 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     if (!map || members.length === 0) return;
     const bounds = new LngLatBounds();
     for (const m of members) bounds.extend([m.lon, m.lat]);
-    // If members share a coordinate (e.g. same building), bounds collapses to a
-    // point — easeTo with a higher zoom instead of fitBounds-on-zero-area which
-    // is a no-op.
+    // If members share a coordinate (e.g. address-less listings that fell back
+    // to the same town centroid), bounds collapses to a point and zooming can't
+    // separate them. Spiderfy the cluster instead — fan members out radially
+    // in screen space so each becomes its own clickable target.
     const sw = bounds.getSouthWest();
     const ne = bounds.getNorthEast();
     if (sw.lat === ne.lat && sw.lng === ne.lng) {
-      map.easeTo({
-        center: [sw.lng, sw.lat],
-        zoom: Math.min((map.getMaxZoom?.() ?? 19) - 1, map.getZoom() + 3),
-        duration: 450
-      });
+      setSpider({ anchorLat: sw.lat, anchorLon: sw.lng, members });
       return;
     }
+    // Different-coords cluster: close any open spider before flying to it,
+    // otherwise the spider would recompute mid-flight and trail off-screen.
+    setSpider(null);
     const isWide = (map.getContainer().clientWidth || 0) >= 1024;
     map.fitBounds(bounds, {
       padding: isWide
@@ -1201,11 +1373,65 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     });
   };
 
+  // While the spider is open: bump renderTick on every map move so the
+  // pixel-projected member positions follow pan/zoom. Close on Escape or on
+  // a background map click (any click that didn't land on a marker or on a
+  // spider element).
+  useEffect(() => {
+    if (!spider) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const onMove = () => setRenderTick((t) => t + 1);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSpider(null);
+    };
+    const onBackgroundClick = (event: maplibregl.MapMouseEvent) => {
+      const target = event.originalEvent.target as HTMLElement | null;
+      if (target && target.closest('[data-atlas-spider]')) return;
+      if (target && target.closest('.atlas-map-marker')) return;
+      setSpider(null);
+    };
+    map.on('move', onMove);
+    map.on('zoom', onMove);
+    map.on('click', onBackgroundClick);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      map.off('move', onMove);
+      map.off('zoom', onMove);
+      map.off('click', onBackgroundClick);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [spider]);
+
+  // Reconcile spider members against the live `pins` prop. When the user
+  // discards a listing while the spider is open, that listing disappears from
+  // `pins`; we drop it from the spider so its stale PinButton stops rendering.
+  // Collapse the spider entirely once 1 or fewer members remain.
+  useEffect(() => {
+    if (!spider) return;
+    const live = new Map(pins.map((p) => [p.id, p]));
+    const next = spider.members
+      .map((m) => live.get(m.id))
+      .filter((p): p is AtlasMapPin => !!p);
+    if (next.length === spider.members.length) return;
+    if (next.length <= 1) {
+      setSpider(null);
+      return;
+    }
+    setSpider({ ...spider, members: next });
+  }, [pins, spider]);
+
   const portals: ReactNode[] = useMemo(() => {
     const items: ReactNode[] = [];
+    const spideredIds = spider ? new Set(spider.members.map((m) => m.id)) : null;
     for (const [id, managed] of markersRef.current) {
       const group = managed.group;
       if (group.kind === 'pin') {
+        // Hide individual pins that overlap with the spidered set.
+        if (spideredIds?.has(group.pin.id)) {
+          items.push(createPortal(<></>, managed.el, id));
+          continue;
+        }
         items.push(
           createPortal(
             <PinButton
@@ -1219,6 +1445,18 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
           )
         );
       } else {
+        // While spidered, hide the cluster whose members are being fanned out.
+        // Detect by member-set equality rather than coord equality — the
+        // cluster's centroid is `unproject`-ed and can drift by floating-point
+        // ε from the original anchor lat/lon.
+        if (
+          spideredIds &&
+          group.members.length === spideredIds.size &&
+          group.members.every((m) => spideredIds.has(m.id))
+        ) {
+          items.push(createPortal(<></>, managed.el, id));
+          continue;
+        }
         let minChf = Infinity;
         let maxChf = -Infinity;
         for (const m of group.members) {
@@ -1257,7 +1495,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     // renderTick fires after marker sync so the portal map sees freshly-created
     // marker elements; markersRef is mutable so we can't depend on it directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderTick, selectedId, workplaceLabel, onSelect]);
+  }, [renderTick, selectedId, workplaceLabel, onSelect, spider]);
 
   return (
     <div
@@ -1273,9 +1511,95 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       data-atlas-basemap={basemap}
     >
       <style>{`
-        .atlas-map-marker { will-change: transform; }
+        .atlas-map-marker { will-change: transform; transition: opacity 180ms ease; }
       `}</style>
       {portals}
+      {spider && mapRef.current && (() => {
+        const map = mapRef.current;
+        const anchor = map.project([spider.anchorLon, spider.anchorLat]);
+        const n = spider.members.length;
+        // For 2 members, lay out horizontally so the wide pills don't overlap.
+        // For 3+, fan around a ring; radius grows with N so price pills don't
+        // collide on the circle. PinButton width ≈ 78–90px for typical 4-digit
+        // CHF values; circumference ≥ N * 70 px keeps neighbors clear.
+        const items = spider.members.map((m, i) => {
+          let x: number;
+          let y: number;
+          if (n === 2) {
+            const dx = i === 0 ? -56 : 56;
+            x = anchor.x + dx;
+            y = anchor.y;
+          } else {
+            const radius = Math.max(48, (n * 70) / (2 * Math.PI));
+            const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+            x = anchor.x + Math.cos(angle) * radius;
+            y = anchor.y + Math.sin(angle) * radius;
+          }
+          return { pin: m, x, y };
+        });
+        return (
+          <div
+            data-atlas-spider
+            style={{
+              position: 'absolute',
+              inset: 0,
+              pointerEvents: 'none',
+              zIndex: 20
+            }}
+          >
+            <svg
+              width="100%"
+              height="100%"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                overflow: 'visible'
+              }}
+            >
+              {items.map((it) => (
+                <line
+                  key={`leg-${it.pin.id}`}
+                  x1={anchor.x}
+                  y1={anchor.y}
+                  x2={it.x}
+                  y2={it.y}
+                  stroke="rgba(22,20,15,.35)"
+                  strokeWidth={1.25}
+                  strokeDasharray="2 3"
+                />
+              ))}
+              <circle
+                cx={anchor.x}
+                cy={anchor.y}
+                r={4}
+                fill="var(--atlas-ink)"
+                opacity={0.55}
+              />
+            </svg>
+            {items.map((it) => (
+              <div
+                key={it.pin.id}
+                className="atlas-map-marker"
+                style={{
+                  position: 'absolute',
+                  left: it.x,
+                  top: it.y,
+                  transform: 'translate(-50%, -50%)',
+                  pointerEvents: 'auto'
+                }}
+              >
+                <PinButton
+                  totalChf={it.pin.totalChf}
+                  selected={selectedId === it.pin.id}
+                  approximate={it.pin.precision === 'area'}
+                  onClick={() => onSelect?.(it.pin.id)}
+                />
+              </div>
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 });

@@ -189,6 +189,7 @@ export function MobileDetailSheet({
           rooms={view.rooms}
           surfaceM2={view.surfaceM2}
           driveText={view.driveText}
+          commutePending={view.commutePending}
         />
 
         <CommuteTimeline

@@ -25,6 +25,7 @@ export function useSwipeToArchive({ onCommit, threshold = 96 }: Options) {
   const reset = useCallback(() => {
     dragRef.current = null;
     setTranslateX(0);
+    setCommitted(null);
   }, []);
 
   const onPointerDown = useCallback((event: PointerEvent<HTMLElement>) => {

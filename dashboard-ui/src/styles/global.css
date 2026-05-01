@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
 /* ----------------------------------------------------------------------
@@ -81,6 +80,7 @@ body {
   margin: 0;
   background: var(--mantine-color-gray-0);
   color: var(--mantine-color-black);
+  font-family: var(--atlas-sans);
 }
 
 /* Mono / tabular-nums helpers — required for every price and stat. */
@@ -110,6 +110,16 @@ body {
 
   50% {
     opacity: 0.35;
+  }
+}
+
+@keyframes atlas-shimmer {
+  0% {
+    background-position: -160px 0;
+  }
+
+  100% {
+    background-position: 160px 0;
   }
 }
 
@@ -511,7 +521,7 @@ body {
   inset: 0;
   z-index: 1;
   background: #edf1ed;
-  font-family: var(--mantine-font-family);
+  font-family: var(--atlas-sans);
 }
 
 .atlas-map-canvas .leaflet-control-zoom {
@@ -527,7 +537,7 @@ body {
   height: 36px;
   border: 0;
   color: var(--mantine-color-slate-8);
-  font: 700 20px/36px var(--mantine-font-family);
+  font: 700 20px/36px var(--atlas-sans);
 }
 
 .atlas-map-canvas .leaflet-control-zoom a + a {
@@ -540,14 +550,7 @@ body {
 }
 
 .atlas-map-canvas .leaflet-control-attribution {
-  border-radius: 999px 0 0 0;
-  background: color-mix(in srgb, var(--mantine-color-white) 82%, transparent);
-  color: var(--mantine-color-slate-6);
-  font-size: 10px;
-}
-
-.atlas-map-canvas .leaflet-control-attribution a {
-  color: var(--mantine-color-slate-7);
+  display: none;
 }
 
 .atlas-map-modal-inner {
@@ -808,7 +811,7 @@ body {
 .atlas-map-popup {
   overflow: hidden;
   color: var(--mantine-color-dark-8);
-  font-family: var(--mantine-font-family);
+  font-family: var(--atlas-sans);
 }
 
 .atlas-map-popup-media {
@@ -914,7 +917,7 @@ body {
 .atlas-map-cluster-popup {
   padding: 11px;
   color: var(--mantine-color-dark-8);
-  font-family: var(--mantine-font-family);
+  font-family: var(--atlas-sans);
 }
 
 .atlas-map-cluster-popup-title {
@@ -1005,5 +1008,77 @@ body {
 }
 body[data-vaul-drawer-open] {
   overflow-x: hidden;
+}
+
+/* PWA / mobile native-feel polish ------------------------------------- */
+html,
+body {
+  /* Avoid iOS pull-to-refresh and rubber-band when running standalone. */
+  overscroll-behavior-y: none;
+}
+
+@media (display-mode: standalone) {
+  html,
+  body {
+    /* No accidental text selection on long-press in installed mode. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* Inputs and content areas should still allow selection. */
+  input,
+  textarea,
+  [contenteditable='true'],
+  [data-allow-select] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* Remove the gray tap highlight; we rely on :active styles instead. */
+a,
+button,
+[role='button'] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* PWA prompt toast ---------------------------------------------------- */
+.pwa-toast {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  background: var(--atlas-ink, #16140f);
+  color: var(--atlas-bg, #f6f3ee);
+  border-radius: var(--atlas-r-pill, 999px);
+  box-shadow: var(--atlas-shadow-2, 0 22px 50px -22px rgba(0, 0, 0, 0.4));
+  font: 500 14px/1.3 var(--atlas-sans, system-ui, sans-serif);
+  max-width: min(92vw, 420px);
+}
+.pwa-toast button {
+  appearance: none;
+  border: 0;
+  background: var(--atlas-bg, #f6f3ee);
+  color: var(--atlas-ink, #16140f);
+  font: inherit;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--atlas-r-pill, 999px);
+  cursor: pointer;
+}
+.pwa-toast button:active {
+  opacity: 0.8;
+}
+.pwa-toast__dismiss {
+  background: transparent !important;
+  color: var(--atlas-bg, #f6f3ee) !important;
+  font-size: 18px !important;
+  padding: 4px 8px !important;
+  line-height: 1 !important;
 }
 

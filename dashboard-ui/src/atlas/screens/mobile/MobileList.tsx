@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { GlassPill, Icons } from '../../components';
 import { MobileListRow } from './MobileListRow';
 import { SortMenu } from '../SortMenu';
@@ -18,11 +18,13 @@ type MobileListProps = {
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
+  pendingIds?: ReadonlySet<string>;
   onScan: () => void;
   scanning: boolean;
   onOpenFilters: () => void;
   sort: AtlasSortValue;
   onSortChange: (sort: AtlasSortValue) => void;
+  scanStatus?: ReactNode;
 };
 
 const rootStyle: CSSProperties = {
@@ -62,6 +64,7 @@ const stickyHeaderStyle: CSSProperties = {
   position: 'sticky',
   top: 0,
   zIndex: 6,
+  paddingTop: 'env(safe-area-inset-top, 0px)',
   background: 'var(--atlas-glass-base-bg)',
   backdropFilter: 'var(--atlas-glass-base-blur)',
   WebkitBackdropFilter: 'var(--atlas-glass-base-blur)',
@@ -98,13 +101,17 @@ export function MobileList({
   onStageChange,
   onSelect,
   onArchive,
+  pendingIds,
   onScan,
   scanning,
   onOpenFilters,
   sort,
-  onSortChange
+  onSortChange,
+  scanStatus
 }: MobileListProps) {
-  const count = listings.length;
+  const count = pendingIds && pendingIds.size > 0
+    ? listings.reduce((acc, l) => acc + (pendingIds.has(l.id) ? 0 : 1), 0)
+    : listings.length;
   const zoneLabel = formatZonesShort(profile.zones, profile.shortTitle);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const headerLeadRef = useRef<HTMLDivElement | null>(null);
@@ -315,12 +322,14 @@ export function MobileList({
           {renderStageBar()}
         </div>
 
+        {scanStatus ?? null}
+
         <div
           style={{
             padding: `0 12px calc(110px + env(safe-area-inset-bottom, 16px))`
           }}
         >
-          {listings.length === 0 ? (
+          {count === 0 ? (
             <div
               style={{
                 padding: '40px 12px',
@@ -338,6 +347,7 @@ export function MobileList({
                 listing={listing}
                 onSelect={onSelect}
                 onArchive={onArchive}
+                pending={pendingIds?.has(listing.id)}
               />
             ))
           )}

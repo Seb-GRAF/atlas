@@ -11,6 +11,7 @@ type ListPanelProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
+  pendingIds?: ReadonlySet<string>;
   generatedAt: string;
   totalCount?: number;
   emptyContent?: React.ReactNode;
@@ -53,6 +54,7 @@ export function ListPanel({
   selectedId,
   onSelect,
   onArchive,
+  pendingIds,
   generatedAt,
   totalCount,
   emptyContent,
@@ -114,8 +116,7 @@ export function ListPanel({
             overflowX: 'hidden',
             padding: '8px 8px 16px',
             display: 'flex',
-            flexDirection: 'column',
-            gap: 4
+            flexDirection: 'column'
           }}
         >
           {listings.map((listing) => (
@@ -125,6 +126,7 @@ export function ListPanel({
               selected={listing.id === selectedId}
               onSelect={onSelect}
               onArchive={onArchive}
+              pending={pendingIds?.has(listing.id)}
             />
           ))}
         </div>

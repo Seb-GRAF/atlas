@@ -8,6 +8,7 @@ type ScanProgressContentProps = {
   sources: ScanSourceRow[];
   onCancel: () => void;
   onBackground: () => void;
+  finished?: { kind: 'done' | 'error' | 'cancelled'; newCount?: number; message?: string };
 };
 
 const headerRowStyle: CSSProperties = {
@@ -74,17 +75,26 @@ function dotStyle(state: ScanSourceState): CSSProperties {
 
 function rightLabel(source: ScanSourceRow): { text: string; mono: boolean; color: string } {
   if (source.state === 'done') {
-    const n = source.newCount ?? 0;
-    const text = n === 1 ? '1 nouvelle' : `${n} nouvelles`;
+    if (source.kind === 'phase') {
+      return { text: 'terminé', mono: false, color: 'var(--atlas-good)' };
+    }
+    const n = source.found ?? source.newCount ?? 0;
+    const text = n === 1 ? '1 annonce' : `${n} annonces`;
     return { text, mono: true, color: 'var(--atlas-good)' };
   }
   if (source.state === 'running') {
     return { text: 'en cours', mono: false, color: 'var(--atlas-ink-3)' };
   }
   if (source.state === 'error') {
-    return { text: 'erreur', mono: false, color: 'var(--atlas-bad)' };
+    return { text: source.error || 'erreur', mono: false, color: 'var(--atlas-bad)' };
   }
   return { text: 'en file', mono: false, color: 'var(--atlas-ink-3)' };
+}
+
+function formatDuration(ms?: number | null) {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function nameColor(state: ScanSourceState): string {
@@ -97,10 +107,15 @@ export function ScanProgressContent({
   total,
   sources,
   onCancel,
-  onBackground
+  onBackground,
+  finished
 }: ScanProgressContentProps) {
   const safeTotal = total > 0 ? total : 1;
   const pct = Math.max(0, Math.min(100, Math.round((done / safeTotal) * 100)));
+
+  if (finished) {
+    return <ScanFinishedView finished={finished} />;
+  }
 
   return (
     <>
@@ -128,7 +143,7 @@ export function ScanProgressContent({
         <div style={headingStyle}>Scan en cours</div>
         <span style={{ flex: 1 }} />
         <span style={monoCountStyle}>
-          {done} / {total} sources
+          {done} / {total} étapes
         </span>
       </div>
 
@@ -139,6 +154,7 @@ export function ScanProgressContent({
       <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {sources.map((source) => {
           const right = rightLabel(source);
+          const duration = formatDuration(source.durationMs);
           return (
             <div key={source.name} style={sourceRowStyle}>
               <span style={dotStyle(source.state)}>
@@ -155,16 +171,57 @@ export function ScanProgressContent({
                   />
                 ) : null}
               </span>
-              <span style={{ color: nameColor(source.state), flex: 1 }}>{source.name}</span>
               <span
                 style={{
-                  color: right.color,
-                  fontFamily: right.mono ? 'var(--atlas-mono)' : undefined,
-                  fontVariantNumeric: right.mono ? 'tabular-nums' : undefined,
-                  fontSize: 11.5
+                  color: nameColor(source.state),
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
                 }}
               >
-                {right.text}
+                {source.name}
+              </span>
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: 6,
+                  minWidth: 0,
+                  maxWidth: '58%'
+                }}
+              >
+                <span
+                  title={right.text}
+                  style={{
+                    color: right.color,
+                    fontFamily: right.mono ? 'var(--atlas-mono)' : undefined,
+                    fontVariantNumeric: right.mono ? 'tabular-nums' : undefined,
+                    fontSize: 11.5,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {right.text}
+                </span>
+                {duration ? (
+                  <span
+                    style={{
+                      color: 'var(--atlas-ink-3)',
+                      fontFamily: 'var(--atlas-mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                      fontSize: 11,
+                      whiteSpace: 'nowrap',
+                      flex: '0 0 auto'
+                    }}
+                  >
+                    {duration}
+                  </span>
+                ) : null}
               </span>
             </div>
           );
@@ -188,5 +245,74 @@ export function ScanProgressContent({
         </AtlasButton>
       </div>
     </>
+  );
+}
+
+const finishedRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 12
+};
+
+const finishedBadgeStyle = (kind: 'done' | 'error' | 'cancelled'): CSSProperties => {
+  const bg =
+    kind === 'done'
+      ? 'var(--atlas-good)'
+      : kind === 'error'
+      ? 'var(--atlas-bad)'
+      : 'var(--atlas-line)';
+  return {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    background: bg,
+    color: '#fff',
+    display: 'grid',
+    placeItems: 'center',
+    flex: '0 0 auto',
+    boxShadow: '0 0 0 3px rgba(255,255,255,0.65)'
+  };
+};
+
+function ScanFinishedView({ finished }: { finished: NonNullable<ScanProgressContentProps['finished']> }) {
+  const { kind, newCount, message } = finished;
+  const headline =
+    kind === 'done'
+      ? 'Scan terminé'
+      : kind === 'error'
+      ? 'Scan interrompu'
+      : 'Scan annulé';
+  const subline =
+    message ??
+    (kind === 'done'
+      ? typeof newCount === 'number'
+        ? newCount === 0
+          ? 'Aucune nouvelle annonce.'
+          : newCount === 1
+          ? '1 nouvelle annonce.'
+          : `${newCount} nouvelles annonces.`
+        : 'Liste mise à jour.'
+      : kind === 'error'
+      ? 'Voir le journal pour les détails.'
+      : '');
+
+  return (
+    <div style={finishedRowStyle}>
+      <span style={finishedBadgeStyle(kind)}>
+        {kind === 'done' ? <Icons.Check size={16} stroke={2.4} /> : null}
+        {kind === 'error' ? (
+          <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>!</span>
+        ) : null}
+        {kind === 'cancelled' ? (
+          <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1, color: 'var(--atlas-ink-2)' }}>×</span>
+        ) : null}
+      </span>
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={headingStyle}>{headline}</div>
+        {subline ? (
+          <div style={{ fontSize: 12, color: 'var(--atlas-ink-3)', marginTop: 2 }}>{subline}</div>
+        ) : null}
+      </div>
+    </div>
   );
 }

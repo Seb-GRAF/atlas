@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { Icons, Mono, PhotoFrame, formatCHF } from '../../components';
 import type { AtlasListing } from '../../types';
 import { CommuteChips } from '../CommuteChips';
@@ -8,6 +8,7 @@ type MobileListRowProps = {
   listing: AtlasListing;
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
+  pending?: boolean;
 };
 
 const wrapperStyle: CSSProperties = {
@@ -109,7 +110,7 @@ const metaItem: CSSProperties = {
 
 const SWIPE_THRESHOLD = 96;
 
-export function MobileListRow({ listing, onSelect, onArchive }: MobileListRowProps) {
+export function MobileListRow({ listing, onSelect, onArchive, pending = false }: MobileListRowProps) {
   const sourceShort = String(listing.source).replace(/\.ch$/i, '');
   const swipeEnabled = !!onArchive;
 
@@ -119,6 +120,52 @@ export function MobileListRow({ listing, onSelect, onArchive }: MobileListRowPro
       onArchive?.(listing.id);
     }
   });
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [collapsing, setCollapsing] = useState(false);
+  const swipeReset = swipe.reset;
+  const wasSwipedRef = useRef(false);
+
+  useEffect(() => {
+    const node = wrapperRef.current;
+    if (!node) return;
+
+    if (pending) {
+      wasSwipedRef.current = !!swipe.committed;
+      const h = node.getBoundingClientRect().height;
+      node.style.height = `${h}px`;
+      void node.offsetHeight;
+      const id = requestAnimationFrame(() => {
+        node.style.height = '0px';
+        setCollapsing(true);
+      });
+      return () => cancelAnimationFrame(id);
+    }
+
+    swipeReset();
+    wasSwipedRef.current = false;
+
+    if (!collapsing && !node.style.height) return;
+
+    node.style.height = '';
+    const target = node.scrollHeight;
+    node.style.height = '0px';
+    void node.offsetHeight;
+    setCollapsing(false);
+    requestAnimationFrame(() => {
+      node.style.height = `${target}px`;
+    });
+
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target !== node) return;
+      if (e.propertyName !== 'height') return;
+      node.style.height = '';
+      node.removeEventListener('transitionend', onEnd);
+    };
+    node.addEventListener('transitionend', onEnd);
+    return () => node.removeEventListener('transitionend', onEnd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, swipeReset]);
 
   const suppressClickRef = useRef(false);
 
@@ -156,8 +203,21 @@ export function MobileListRow({ listing, onSelect, onArchive }: MobileListRowPro
   const past = Math.abs(tx) > SWIPE_THRESHOLD;
   const actionOpacity = swipeEnabled ? Math.min(1, Math.abs(tx) / SWIPE_THRESHOLD) : 0;
 
+  const fadeOnCollapse = collapsing && !wasSwipedRef.current;
+  const collapseStyle: CSSProperties = {
+    transition:
+      'height 260ms cubic-bezier(.2,.7,.2,1), opacity 200ms ease, border-color 200ms ease',
+    opacity: fadeOnCollapse ? 0 : 1,
+    borderBottomColor: collapsing ? 'transparent' : undefined,
+    pointerEvents: pending ? 'none' : undefined
+  };
+
   return (
-    <div style={wrapperStyle}>
+    <div
+      ref={wrapperRef}
+      style={{ ...wrapperStyle, ...collapseStyle }}
+      aria-hidden={pending || undefined}
+    >
       {swipeEnabled && tx !== 0 ? (
         <div
           style={{

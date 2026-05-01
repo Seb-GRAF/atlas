@@ -1,4 +1,5 @@
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
 const GEO_ADMIN_URL = 'https://api3.geo.admin.ch/rest/services/api/SearchServer';
 const PHOTON_URL = 'https://photon.komoot.io/api/';
 const GEO_ADMIN_PRIMARY_ORIGINS = 'address,gg25,zipcode';
@@ -149,4 +150,82 @@ export async function geocodeAddress(query, cache, options = {}) {
 
   cache[key] = null;
   return null;
+}
+
+// Cache key for reverse lookups: round to ~10m resolution so tiny floating-
+// point variations from different sources collapse to the same entry.
+export function buildReverseGeocodeKey(lat, lon) {
+  const latNum = Number(lat);
+  const lonNum = Number(lon);
+  if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) return '';
+  return `rev:${latNum.toFixed(5)},${lonNum.toFixed(5)}`;
+}
+
+export function parseNominatimReverse(payload) {
+  if (!payload || typeof payload !== 'object' || payload.error) return null;
+  const a = payload.address || {};
+  const houseNumber = String(a.house_number || '').trim();
+  const road = String(a.road || a.pedestrian || a.footway || '').trim();
+  const postal = String(a.postcode || '').trim();
+  const city = String(a.city || a.town || a.village || a.municipality || a.suburb || '').trim();
+  const street = [road, houseNumber].filter(Boolean).join(' ');
+  if (!street && !city) return null;
+  const fullAddress = [street, [postal, city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return {
+    address: fullAddress,
+    street,
+    city,
+    postal,
+    displayName: String(payload.display_name || '')
+  };
+}
+
+function buildNominatimReverseUrl(lat, lon, lang = 'fr') {
+  const url = new URL(NOMINATIM_REVERSE_URL);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('lat', String(lat));
+  url.searchParams.set('lon', String(lon));
+  url.searchParams.set('zoom', '18');
+  url.searchParams.set('addressdetails', '1');
+  if (lang) url.searchParams.set('accept-language', lang);
+  return url.toString();
+}
+
+// Reverse-geocode a (lat, lon) pair into a Swiss-style postal address. Uses
+// the same cache file as forward geocoding (a separate `rev:lat,lon` key
+// space). Honors Nominatim's 1-req/sec policy via shared throttle.
+export async function reverseGeocode(lat, lon, cache, options = {}) {
+  const key = buildReverseGeocodeKey(lat, lon);
+  if (!key) return null;
+
+  if (cache && Object.prototype.hasOwnProperty.call(cache, key)) {
+    return cache[key]; // may be null (cached miss) or a result object
+  }
+
+  const fetchJson = options.fetchJson;
+  if (typeof fetchJson !== 'function') {
+    throw new Error('reverseGeocode requires options.fetchJson');
+  }
+  const warn = typeof options.warn === 'function' ? options.warn : console.warn;
+  const sleep = typeof options.sleep === 'function'
+    ? options.sleep
+    : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const now = typeof options.now === 'function' ? options.now : () => Date.now();
+  const minIntervalMs = Number.isFinite(Number(options.minNominatimIntervalMs))
+    ? Number(options.minNominatimIntervalMs)
+    : 1100;
+
+  await throttleNominatim(sleep, now, minIntervalMs);
+
+  try {
+    const payload = await fetchJson(buildNominatimReverseUrl(lat, lon, options.lang || 'fr'));
+    lastNominatimRequestAt = now();
+    const parsed = parseNominatimReverse(payload);
+    cache[key] = parsed;
+    return parsed;
+  } catch (err) {
+    warn(`WARN reverse-geocode ${lat},${lon} failed: ${err.message}`);
+    cache[key] = null;
+    return null;
+  }
 }

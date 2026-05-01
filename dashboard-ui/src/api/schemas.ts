@@ -161,6 +161,7 @@ export const ListingSchema = z
     transitRoute: TransitRouteSchema.nullable().optional(),
     transitRouteOverlay: RouteOverlaySchema.nullable().optional(),
     commuteWarnings: z.array(z.string()).optional(),
+    commutePending: z.boolean().optional(),
     publishedAt: z.string().nullable().optional(),
     firstSeenAt: z.string().nullable().optional(),
     lastSeenAt: z.string().nullable().optional(),
@@ -243,6 +244,59 @@ export const RunScanJobResponseSchema = z.object({
   error: z.string().optional()
 });
 
+const ScanSourceProgressSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  kind: z.enum(['source', 'phase']).optional(),
+  status: z.enum(['queued', 'running', 'done', 'error']),
+  found: z.number().optional(),
+  error: z.string().nullable().optional(),
+  startedAt: z.string().nullable().optional(),
+  finishedAt: z.string().nullable().optional(),
+  durationMs: z.number().nullable().optional()
+});
+
+const CommuteItemPayloadSchema = z
+  .object({
+    distanceKm: z.number().nullable().optional(),
+    distanceText: z.string().optional(),
+    driveMinutes: z.number().nullable().optional(),
+    driveText: z.string().optional(),
+    driveRouteStatus: z.string().nullable().optional(),
+    transitMinutes: z.number().nullable().optional(),
+    transitText: z.string().optional(),
+    transitRouteStatus: z.string().nullable().optional(),
+    transitRouteLabel: z.string().nullable().optional(),
+    transitRouteComputedAt: z.string().nullable().optional(),
+    transitRoute: TransitRouteSchema.nullable().optional(),
+    transitRouteOverlay: RouteOverlaySchema.nullable().optional(),
+    commuteWarnings: z.array(z.string()).optional(),
+    distanceComputed: z.boolean().optional(),
+    distanceFromWorkAddress: z.string().optional(),
+    commutePending: z.boolean().optional()
+  })
+  .passthrough();
+
+const CommutePhaseSchema = z.object({
+  status: z.enum(['running', 'done', 'error', 'cancelled']),
+  total: z.number().optional(),
+  done: z.number().optional(),
+  startedAt: z.string().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+  finishedAt: z.string().nullable().optional(),
+  error: z.string().nullable().optional(),
+  lastItem: z
+    .object({
+      id: z.string(),
+      done: z.number().optional(),
+      total: z.number().optional(),
+      commute: CommuteItemPayloadSchema.nullable().optional(),
+      at: z.string().optional()
+    })
+    .nullable()
+    .optional()
+});
+
 export const ScanJobSchema = z.object({
   ok: z.boolean(),
   status: z.enum(['running', 'done', 'error', 'cancelled']).optional(),
@@ -250,12 +304,18 @@ export const ScanJobSchema = z.object({
   total: z.number().optional(),
   done: z.number().optional(),
   currentStep: z.string().optional(),
+  phase: z.string().optional(),
+  totalUnits: z.number().optional(),
+  completedUnits: z.number().optional(),
+  currentMessage: z.string().optional(),
+  sources: z.array(ScanSourceProgressSchema).optional(),
   startedAt: z.string().optional(),
   updatedAt: z.string().optional(),
   finishedAt: z.string().optional(),
   summary: z.string().optional(),
   newCount: z.number().optional(),
-  error: z.string().optional()
+  error: z.string().optional(),
+  commute: CommutePhaseSchema.nullable().optional()
 });
 
 export const TogglePinResponseSchema = z.object({

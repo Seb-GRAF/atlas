@@ -179,6 +179,7 @@ export function DetailPanel({
           rooms={listing.rooms}
           surfaceM2={listing.surfaceM2}
           driveText={listing.driveText}
+          commutePending={listing.commutePending}
         />
 
         <CommuteTimeline

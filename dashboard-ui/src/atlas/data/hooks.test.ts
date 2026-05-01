@@ -49,4 +49,23 @@ describe('buildProfilePayload', () => {
 
     expect(payload.sources.anibis).toBe(true);
   });
+
+  it('keeps Facebook Marketplace disabled unless explicitly enabled', () => {
+    const payload = buildProfilePayload(profile, detail);
+
+    expect(payload.sources.facebookMarketplace).toBe(false);
+
+    const enabled = buildProfilePayload(
+      {
+        ...profile,
+        enabledSources: {
+          ...profile.enabledSources,
+          'Facebook Marketplace': true
+        }
+      },
+      detail
+    );
+
+    expect(enabled.sources.facebookMarketplace).toBe(true);
+  });
 });

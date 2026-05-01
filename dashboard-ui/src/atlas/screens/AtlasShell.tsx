@@ -3,7 +3,7 @@ import { AtlasMap, type AtlasMapHandle, type AtlasMapPin, MapControls } from '..
 import { useAtlasMutations, useAtlasState } from '../data/hooks';
 import { listStages, matchesStage, sortListings } from '../data/adapt';
 import { useAtlasUrlState } from '../url';
-import { ALL_SOURCES, buildScanSources, useScan } from '../scan';
+import { ALL_SOURCES, buildScanSources, useScan, useScanCardVisibility } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
 import { loadBasemap, saveBasemap, type Basemap } from '../mapPrefs';
 import { TopBar } from './TopBar';
@@ -11,6 +11,7 @@ import { ListPanel } from './ListPanel';
 import { DetailPanel, PANEL_ANIM_MS } from './DetailPanel';
 import { EmptyListPanel } from './EmptyListPanel';
 import { ScanProgressCard } from './ScanProgressCard';
+import { CommuteProgressBanner } from './CommuteProgressBanner';
 import { SettingsDrawer, SettingsScrim } from './SettingsDrawer';
 import { ListSkeleton } from './Skeletons';
 import { UndoToast } from './UndoToast';
@@ -78,6 +79,18 @@ function DesktopShell() {
     [visibleListings, urlState.stage, urlState.sort]
   );
 
+  // For list rendering: keep pending items in place so they can animate to
+  // height 0 instead of jumping. They are excluded from `filtered` (and thus
+  // from selection/stage counts/map pins).
+  const filteredForList = useMemo(() => {
+    if (pendingIds.size === 0) return filtered;
+    const pendingMembers = listings.filter(
+      (l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)
+    );
+    if (pendingMembers.length === 0) return filtered;
+    return sortListings([...filtered, ...pendingMembers], urlState.sort);
+  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort]);
+
   const handleArchive = useCallback(
     (id: string) => {
       // If the archived listing is currently selected, advance selection to next/prev.
@@ -115,11 +128,7 @@ function DesktopShell() {
     }
     if (selected.transitRouteOverlay && selected.transitRouteOverlay.legs.length > 0) {
       setRouteOverlay(selected.transitRouteOverlay);
-      setRouteError(
-        selected.transitRouteOverlay.failedCount > 0
-          ? `${selected.transitRouteOverlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`
-          : null
-      );
+      setRouteError(null);
       return;
     }
     if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
@@ -134,9 +143,6 @@ function DesktopShell() {
           : null
       );
       setRouteOverlay(overlay);
-      if (overlay.failedCount > 0) {
-        setRouteError(`${overlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`);
-      }
     } catch (err) {
       setRouteError(`Impossible de tracer le trajet: ${(err as Error).message}`);
     } finally {
@@ -183,8 +189,10 @@ function DesktopShell() {
     : VEVEY_FALLBACK;
 
   const scanRunning = !!scan && scan.status === 'running';
+  const scanCardPhase = useScanCardVisibility(scan);
   const showEmpty = !isLoading && listings.length === 0 && !scanRunning;
-  const showStageEmpty = !isLoading && listings.length > 0 && filtered.length === 0 && !scanRunning;
+  const showStageEmpty =
+    !isLoading && listings.length > 0 && filteredForList.length === 0 && !scanRunning;
   const enabledSourceLabels = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
 
   const moveSelection = useCallback(
@@ -276,12 +284,14 @@ function DesktopShell() {
 
       <ListPanel
         zones={profile.zones}
-        listings={showEmpty || showStageEmpty || isLoading ? [] : filtered}
+        listings={showEmpty || showStageEmpty || isLoading ? [] : filteredForList}
         selectedId={urlState.listing}
         onSelect={(id) => updateUrl({ listing: id })}
         onArchive={handleArchive}
+        pendingIds={pendingIds}
         generatedAt={profile.generatedAt}
         totalCount={isLoading ? undefined : filtered.length}
+        scanStatus={<CommuteProgressBanner scan={scan} />}
         emptyContent={
           isLoading ? (
             <ListSkeleton />
@@ -300,7 +310,14 @@ function DesktopShell() {
         onSortChange={(sort) => updateUrl({ sort })}
       />
 
-      {scanRunning ? <ScanCardConnector profile={profile} scan={scan} onCancel={() => cancelScan()} /> : null}
+      {scanCardPhase !== 'hidden' && scan ? (
+        <ScanCardConnector
+          profile={profile}
+          scan={scan}
+          phase={scanCardPhase}
+          onCancel={() => cancelScan()}
+        />
+      ) : null}
 
       {detailRender ? (
         <DetailPanel
@@ -390,13 +407,23 @@ function DesktopShell() {
 function ScanCardConnector({
   profile,
   scan,
+  phase,
   onCancel
 }: {
   profile: AtlasProfile;
   scan: ScanJob;
+  phase: 'running' | 'finished';
   onCancel: () => void;
 }) {
   const { total, done, sources } = buildScanSources(profile, scan);
+  const finished =
+    phase === 'finished' && (scan.status === 'done' || scan.status === 'error' || scan.status === 'cancelled')
+      ? {
+          kind: scan.status,
+          newCount: scan.newCount,
+          message: scan.status === 'error' ? scan.error : undefined
+        }
+      : undefined;
   return (
     <ScanProgressCard
       total={total}
@@ -406,6 +433,7 @@ function ScanCardConnector({
       onBackground={() => {
         /* card hides itself when scan completes; nothing to do here */
       }}
+      finished={finished}
     />
   );
 }

@@ -6,9 +6,10 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   buildTransitRouteOverlay,
+  buildTransitLocationCacheKey,
   buildDriveCacheKey,
-  buildTransitCacheKey,
   clearCommuteFields,
+  clearedCommuteFields,
   formatTransitLocation,
   formatMinutesText,
   getCachedRoute,
@@ -21,7 +22,15 @@ import {
   setCommuteSuccessFields,
   toDurationMinutesOrNull
 } from './lib/commute.mjs';
-import { geocodeAddress as geocodeSwissAddress } from './lib/geocode.mjs';
+import { geocodeAddress as geocodeSwissAddress, reverseGeocode as reverseGeocodeAddress } from './lib/geocode.mjs';
+import {
+  buildAddressDedupKey,
+  buildCrossSourceDedupKey,
+  dedupeCrossSourceListings,
+  isStub,
+  listingQualityRank,
+  toDiscardedStub
+} from './lib/dedup.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -99,31 +108,6 @@ const SOURCE_PRIORITY = {
 function emitProgress(payload) {
   if (!PROGRESS_ENABLED) return;
   console.log(`${PROGRESS_PREFIX}${JSON.stringify({ ...payload, at: new Date().toISOString() })}`);
-}
-
-function buildProgressPlan(config) {
-  const areas = Array.isArray(config?.areas) ? config.areas : [];
-  const pagesPerArea = Math.max(1, Number(config?.pagesPerArea || 1));
-  const steps = [];
-
-  for (const area of areas) {
-    const label = String(area?.label || area?.slug || 'zone').trim();
-    for (let page = 1; page <= pagesPerArea; page += 1) {
-      steps.push(`immobilier.ch · ${label} · page ${page}`);
-    }
-  }
-
-  if (config.sources?.flatfox !== false) steps.push('flatfox.ch');
-  if (config.sources?.naef !== false) steps.push('naef.ch');
-  if (config.sources?.bernardNicod !== false) steps.push('bernard-nicod.ch');
-  if (config.sources?.retraitesListings !== false) steps.push('Retraites Populaires');
-  if (config.sources?.anibis !== false) steps.push('anibis.ch');
-  steps.push('Préparation des annonces');
-  if (config.sources?.flatfox !== false) steps.push('Vérification Flatfox');
-  steps.push('Tri et déduplication');
-  steps.push('Images et sauvegarde');
-
-  return steps;
 }
 
 const DEFAULT_NON_SPECULATIVE_GROUPS = [];
@@ -685,6 +669,23 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function runLimited(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(Number(limit || 1), items.length || 1));
+
+  async function runWorker() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, runWorker));
+  return results;
+}
+
 function sanitizeAddressPart(value = '') {
   return String(value || '')
     .replace(/\s+/g, ' ')
@@ -784,9 +785,9 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
   }
 
   const transitRef = resolveTransitReference();
-  const key = buildTransitCacheKey(listingAddress, workAddress);
   const from = formatTransitLocation(listingCoords, listingAddress);
   const to = formatTransitLocation(workCoords, workAddress);
+  const key = buildTransitLocationCacheKey(listingCoords, listingAddress, workCoords, workAddress);
   const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
   if (cached.fresh && cached.minutes != null) {
     return { minutes: cached.minutes, route: cached.route, status: 'ok' };
@@ -823,6 +824,10 @@ async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCo
 
 async function geocodeAddress(query, geocodeCache) {
   return geocodeSwissAddress(query, geocodeCache, { fetchJson, sleep });
+}
+
+async function reverseGeocode(lat, lon, geocodeCache) {
+  return reverseGeocodeAddress(lat, lon, geocodeCache, { fetchJson, sleep });
 }
 
 async function computeDistanceFromWork(item, workCoords, geocodeCache) {
@@ -874,6 +879,7 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
     ? await buildTransitRouteOverlay(transit.route, {
         listingId: String(item.id),
         listingCoords: distance.listingCoords,
+        workplaceCoords: workCoords,
         resolveFootRoute: (fromLngLat, toLngLat) => fetchFootRoute(fromLngLat, toLngLat, routeCache)
       })
     : null;
@@ -894,7 +900,6 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
   if (drive.status === 'route-failed') warnings.push('Temps voiture indisponible.');
   if (transit.status === 'cached-stale') warnings.push('Trajet public issu du cache.');
   if (transit.status === 'route-failed') warnings.push('Transport public indisponible.');
-  if (transitRouteOverlay?.failedCount > 0) warnings.push('Tracé du trajet partiellement approximatif.');
   item.commuteWarnings = warnings;
 }
 
@@ -2080,87 +2085,6 @@ function parseBernardPrice(text = '') {
   return toPositiveNumber(Number(cleaned));
 }
 
-async function enrichBernardNicodFromDetail(item) {
-  if (!item?.url) return;
-
-  try {
-    const html = await fetchHtml(item.url);
-
-    // Address: "Vaud, LA TOUR-DE-PEILZ, Chemin des Bulesses 55"
-    const addrMatch = html.match(/Adresse\s*:\s*(?:<[^>]*>\s*)*([^<]+)/i);
-    if (addrMatch) {
-      const raw = addrMatch[1].trim();
-      // Format: "Canton, CITY, Street Nr" → keep "Street Nr, NPA City"
-      const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-      if (parts.length >= 3) {
-        // parts[0]=Canton, parts[1]=CITY, parts[2..]=Street
-        const street = parts.slice(2).join(', ');
-        const city = parts[1];
-        if (street) item.address = `${street}, ${city}`;
-        if (city) item.area = city;
-      } else if (parts.length === 2) {
-        const city = parts[1] || parts[0];
-        if (city) item.area = city;
-      }
-    }
-
-    // Loyer brut (charges included) — matches both "CHF" and "Fr." currency prefixes
-    // Format A (structured): "Loyer: CHF 1'770.-" + "Charges: CHF 200.- / mois"
-    // Format B (description): "Loyer mensuel brut : Fr. 1'550.00" / net / acompte
-    const currencyRe = /(?:CHF|Fr\.?)\s*/;
-    const amountRe = /([\d'\u2018\u2019`\s.,]+)/;
-    const brutMatch = html.match(new RegExp("Loyer\\s+(?:mensuel\\s+)?brut\\s*:?\\s*" + currencyRe.source + amountRe.source, "i"));
-    const netMatch = html.match(new RegExp("Loyer\\s+(?:mensuel\\s+)?net\\s*:?\\s*" + currencyRe.source + amountRe.source, "i"));
-    const acompteMatch = html.match(new RegExp("Acompte\\s*(?:de\\s+charges)?\\s*:?\\s*" + currencyRe.source + amountRe.source, "i"));
-
-    const brut = brutMatch ? parseBernardPrice(`CHF ${brutMatch[1]}`) : null;
-    const net = netMatch ? parseBernardPrice(`CHF ${netMatch[1]}`) : null;
-    const acompte = acompteMatch ? parseBernardPrice(`CHF ${acompteMatch[1]}`) : null;
-
-    if (brut != null) {
-      // Format B found — use explicit brut/net/acompte
-      item.totalChf = brut;
-      item.rentChf = net ?? item.rentChf;
-      item.chargesChf = acompte ?? (net != null ? Math.round(brut - net) : 0);
-      item.priceRaw = `CHF ${Math.round(brut)}/mois`;
-    } else {
-      // Format A fallback — look for separate "Charges:" line
-      // Matches "Charges:  \n CHF 200.-" or "Charges: CHF 200.- / mois" across tags
-      const chargesBlockMatch = html.match(/Charges\s*:\s*(?:<[^>]*>\s*)*(?:CHF|Fr\.?)\s*([\d'\u2018\u2019`\s.,]+)/i);
-      const structuredCharges = chargesBlockMatch ? parseBernardPrice(`CHF ${chargesBlockMatch[1]}`) : null;
-      if (structuredCharges != null && structuredCharges > 0) {
-        const rentNet = item.totalChf ?? item.rentChf;
-        if (rentNet != null) {
-          item.rentChf = rentNet;
-          item.chargesChf = structuredCharges;
-          item.totalChf = rentNet + structuredCharges;
-          item.priceRaw = `CHF ${Math.round(item.totalChf)}/mois`;
-        }
-      }
-    }
-
-    // Rooms from description (e.g. "Appartement de 2 pièces" or "3.5 pièces")
-    if (item.rooms == null) {
-      const roomsMatch = html.match(/(\d+\.?\d*)\s*pi[eè]ces?/i);
-      if (roomsMatch) item.rooms = toPositiveNumber(roomsMatch[1]);
-    }
-
-    // Surface from description
-    if (item.surfaceM2 == null) {
-      const surfMatch = html.match(/Surface\s+habitable\s*:\s*([\d''\s.,]+)\s*m/i);
-      if (surfMatch) item.surfaceM2 = toPositiveNumber(chfToNumber(surfMatch[1]));
-    }
-
-    // Update derived fields
-    if (item.rooms != null) {
-      item.objectType = `Appartement ${item.rooms} pièces`;
-      item.title = item.title || item.objectType;
-    }
-  } catch (err) {
-    // Detail fetch failed — keep card data
-  }
-}
-
 function buildBernardSourceId(href = '', title = '') {
   const clean = String(href || '').split('?')[0].replace(/\/$/, '');
   const tail = clean.split('/').filter(Boolean).pop() || '';
@@ -2169,43 +2093,52 @@ function buildBernardSourceId(href = '', title = '') {
   return crypto.createHash('sha1').update(`${clean}|${title}`).digest('hex').slice(0, 16);
 }
 
-function parseBernardNicodPropertyCard(rawTag = '', fallbackAreaLabel = '') {
-  const attrs = parseHtmlTagAttributes(rawTag);
-  const href = String(attrs.href || '').trim();
+function parseBernardNicodPropertyCard(cardHtml = '', fallbackAreaLabel = '') {
+  // Pull the listing URL from the bookmark anchor.
+  const hrefMatch = cardHtml.match(/<a[^>]+href="([^"]+)"[^>]+rel="bookmark"/i);
+  const href = hrefMatch ? hrefMatch[1] : '';
   if (!href) return null;
 
   const url = toAbsoluteUrlForHost(href, 'https://www.bernard-nicod.ch');
-  if (!url || /\/vente\//i.test(url)) return null;
-  if (/\/location\/(parking|local|commerce|bureau|terrain)\//i.test(url)) return null;
+  if (!url) return null;
+  if (/\/vente\//i.test(url)) return null;
 
-  const title = stripTags(attrs.title || slugToTitle(href) || 'Appartement');
+  // Title: <div class="object-title">…<p class="mb-0">Title here</p></div>
+  const titleMatch = cardHtml.match(/<div[^>]*class="[^"]*object-title[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/i);
+  const title = titleMatch ? stripTags(titleMatch[1]).trim() : (slugToTitle(href) || 'Appartement');
   const lower = title.toLowerCase();
 
-  if (/parking|garage|place de parc|villa|maison|chalet|surface|bureau|commerce|arcade|terrain|immeuble/.test(lower)) {
+  if (/parking|garage|place de parc|villa|maison|chalet|bureau|commerce|arcade|terrain|immeuble/.test(lower)) {
     return null;
   }
   if (!/(appartement|studio|loft|duplex|pi[eè]ces?)/.test(lower)) {
     return null;
   }
 
-  let imageUrls = [];
-  try {
-    const parsed = JSON.parse(String(attrs[':images'] || '[]'));
-    imageUrls = [...new Set((Array.isArray(parsed) ? parsed : [])
-      .map((x) => toAbsoluteUrlForHost(x, 'https://www.bernard-nicod.ch'))
-      .filter(Boolean))].slice(0, 8);
-  } catch {
-    imageUrls = [];
-  }
+  // Address (city only on new design): <div class="field--name-field-cp-address">…<div class="field__item">Rolle</div>
+  const addrMatch = cardHtml.match(/field--name-field-cp-address[\s\S]*?<div[^>]*class="[^"]*field__item[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+  const area = addrMatch ? stripTags(addrMatch[1]).trim() : (fallbackAreaLabel || '');
 
-  const location = stripTags(attrs.location || fallbackAreaLabel || '');
-  const area = location || fallbackAreaLabel || '';
-  const surfaceM2 = String(attrs['additional-suffix'] || '').includes('m')
-    ? toPositiveNumber(String(attrs.additional || '').replace(',', '.'))
-    : null;
+  // Rooms: a sibling <p class="mb-0">4.5 pièces</p>; prefer parsing from title to avoid grabbing surface lines.
   const rooms = parseRooms(title);
 
-  const totalChf = parseBernardPrice(attrs.price || '');
+  // Surface: card has no structured field, but listings often state it in
+  // the title (e.g. "Sublime appartement de 3.0 pièces de 98m² avec vue …").
+  const surfaceMatch = title.match(/(\d+(?:[.,]\d+)?)\s*m[²2]/i);
+  const surfaceFromTitle = surfaceMatch ? toPositiveNumber(surfaceMatch[1].replace(',', '.')) : null;
+
+  // Price: appears in a <p class="mb-0">CHF 3'500.-</p> within a secondary-info block. Fall back to scanning the whole card for any "CHF ..." price.
+  const priceBlocks = [...cardHtml.matchAll(/<p[^>]*class="[^"]*mb-0[^"]*"[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => stripTags(m[1]).trim());
+  const priceText = priceBlocks.find((t) => /CHF\s*[\d]/i.test(t)) || '';
+  const totalChf = parseBernardPrice(priceText);
+
+  // Image URLs: collect every data-src attribute from the card's slick carousel, prepending host.
+  const imageUrls = [...new Set([...cardHtml.matchAll(/data-src="([^"]+)"/gi)]
+    .map((m) => m[1])
+    .filter((u) => /cp_object_photos|object_card/i.test(u))
+    .map((u) => toAbsoluteUrlForHost(u, 'https://www.bernard-nicod.ch'))
+    .filter(Boolean))].slice(0, 8);
+
   const sourceId = buildBernardSourceId(href, title);
 
   return {
@@ -2217,8 +2150,8 @@ function parseBernardNicodPropertyCard(rawTag = '', fallbackAreaLabel = '') {
     address: area,
     area,
     rooms,
-    surfaceM2,
-    priceRaw: stripTags(attrs.price || ''),
+    surfaceM2: surfaceFromTitle,
+    priceRaw: priceText,
     rentChf: totalChf,
     chargesChf: 0,
     totalChf,
@@ -2234,33 +2167,67 @@ function parseBernardNicodPropertyCard(rawTag = '', fallbackAreaLabel = '') {
 }
 
 function parseBernardLastPage(html = '') {
-  const pages = [...String(html || '').matchAll(/page=(\d+)/gi)]
+  // Drupal pager: <a href="?page=47" title="Aller à la dernière page">. Returns 0 if not found (single page).
+  const lastMatch = String(html || '').match(/href="\?page=(\d+)"[^>]*title="Aller à la dernière page"/i);
+  if (lastMatch?.[1]) return Math.max(0, Number(lastMatch[1]));
+  // Fallback: take the max page number referenced anywhere in pager links.
+  const pages = [...String(html || '').matchAll(/href="\?page=(\d+)"/gi)]
     .map((m) => Number(m[1]))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  if (!pages.length) return 1;
+    .filter((n) => Number.isFinite(n) && n >= 0);
+  if (!pages.length) return 0;
   return Math.max(...pages);
 }
 
-async function scrapeBernardNicodListings(config) {
+// Detail-page enrichment for the new bernard-nicod.ch site. The card carries
+// city + price + rooms but never a street address; the detail page also
+// hides the street text, but it embeds the listing's exact coordinates in a
+// "Get directions" Google Maps link (destination=lat,lon). We reverse-
+// geocode those coordinates against Nominatim to recover the street + postal
+// code. Cached via geocodeCache so the second scan and onwards are free.
+async function enrichBernardNicodFromDetail(item, geocodeCache) {
+  if (!item?.url) return;
+  try {
+    const html = await fetchHtml(item.url);
+    const coordMatch = html.match(/destination=([\-0-9.]+),([\-0-9.]+)/);
+    if (!coordMatch) return;
+    const lat = Number(coordMatch[1]);
+    const lon = Number(coordMatch[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+    item.mapLocation = { lat, lon, query: item.url, source: 'listing', precision: 'address' };
+
+    if (!geocodeCache || typeof geocodeCache !== 'object') return;
+    const reversed = await reverseGeocode(lat, lon, geocodeCache);
+    if (!reversed) return;
+
+    if (reversed.address) item.address = reversed.address;
+    if (reversed.city && !item.area) item.area = reversed.city;
+  } catch {
+    // Detail fetch / reverse failed — keep the card-level data we already have.
+  }
+}
+
+async function scrapeBernardNicodListings(config, geocodeCache) {
   const out = [];
   const targetAreaSet = buildTargetAreaSet(config?.areas || []);
   const maxPages = Math.max(1, Number(config?.bernardNicod?.maxPages ?? 8));
 
-  let lastPage = 1;
+  // Drupal pager is 0-indexed (?page=0..N).
+  let lastPage = 0;
 
-  for (let page = 1; page <= Math.min(maxPages, lastPage || maxPages); page += 1) {
+  for (let page = 0; page <= Math.min(maxPages - 1, lastPage); page += 1) {
     try {
-      const url = `https://www.bernard-nicod.ch/search-ajax/buy?action=louer&transaction=buy&page=${page}`;
+      const url = `https://www.bernard-nicod.ch/fr/recherche/residentiel/location?page=${page}`;
       const html = await fetchHtml(url);
-      if (page === 1) {
-        lastPage = Math.max(1, Math.min(maxPages, parseBernardLastPage(html)));
+      if (page === 0) {
+        lastPage = Math.max(0, Math.min(maxPages - 1, parseBernardLastPage(html)));
       }
 
-      const cardTags = [...html.matchAll(/<property-card\s+([^>]+)>/gi)].map((m) => m[1]);
-      if (!cardTags.length) break;
+      const cards = [...html.matchAll(/<article[^>]*node--type-objects-cp[^>]*>[\s\S]*?<\/article>/gi)].map((m) => m[0]);
+      if (!cards.length) break;
 
-      for (const rawTag of cardTags) {
-        const parsed = parseBernardNicodPropertyCard(rawTag);
+      for (const cardHtml of cards) {
+        const parsed = parseBernardNicodPropertyCard(cardHtml);
         if (!parsed) continue;
         if (!isTargetAreaCity(parsed.area || '', targetAreaSet)) continue;
         out.push(parsed);
@@ -2271,9 +2238,10 @@ async function scrapeBernardNicodListings(config) {
     }
   }
 
-  // Enrich each listing with detail page data (address, brut price, rooms, surface)
+  // Sequentially fetch each detail page to extract coords and reverse-geocode.
+  // Reverse-geocode shares the geocodeCache so repeat scans skip Nominatim.
   for (const item of out) {
-    await enrichBernardNicodFromDetail(item);
+    await enrichBernardNicodFromDetail(item, geocodeCache);
   }
 
   return out;
@@ -2320,8 +2288,17 @@ function parseRetraitesMarker(marker = {}) {
     .map((x) => toAbsoluteUrlForHost(x, 'https://immobilier2.retraitespopulaires.ch'))
     .filter(Boolean))].slice(0, 8);
 
+  // RP's API used to return YYYY-MM-DD; it now returns full ISO with offset
+  // (e.g. "2026-02-14T00:00:00+01:00"). Detect which and parse accordingly.
   const publishedAtRaw = String(attrs?.publication_date || '').trim();
-  const publishedAt = publishedAtRaw ? new Date(`${publishedAtRaw}T00:00:00+01:00`).toISOString() : null;
+  const publishedAt = (() => {
+    if (!publishedAtRaw) return null;
+    const isoCandidate = /^\d{4}-\d{2}-\d{2}T/.test(publishedAtRaw)
+      ? publishedAtRaw
+      : `${publishedAtRaw}T00:00:00+01:00`;
+    const ts = Date.parse(isoCandidate);
+    return Number.isFinite(ts) ? new Date(ts).toISOString() : null;
+  })();
 
   const availableDateRaw = String(attrs?.available_date || '').trim();
   const linkRaw = String(attrs?.link || '').trim();
@@ -2350,7 +2327,7 @@ function parseRetraitesMarker(marker = {}) {
     source: 'retraitespopulaires.ch',
     listingStage: 'early_market',
     movingDateRaw: availableDateRaw || null,
-    publishedAt: Number.isFinite(new Date(publishedAt).getTime()) ? publishedAt : null
+    publishedAt
   };
 }
 
@@ -2408,99 +2385,6 @@ async function fetchFlatfoxListingById(sourceId, fallbackAreaLabel = '') {
   } catch {
     return null;
   }
-}
-
-function buildAddressDedupKey(item) {
-  const rawAddress = String(item?.address || '').trim();
-  const areaKey = normalizeAreaToken(item?.area || '');
-
-  const normalizedParts = rawAddress
-    .split(',')
-    .map((part) => normalizeKeyText(part).replace(/\b\d{4}\b/g, ' ').replace(/\bch\b/g, ' ').replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-
-  if (areaKey && !normalizedParts.some((part) => part === areaKey)) {
-    normalizedParts.push(areaKey);
-  }
-
-  normalizedParts.sort();
-  return normalizedParts.join('|');
-}
-
-function buildCrossSourceDedupKey(item) {
-  const address = buildAddressDedupKey(item);
-  if (!address) return null;
-
-  const rooms = Number.isFinite(Number(item?.rooms)) ? String(Math.floor(Number(item.rooms))) : 'na';
-  const surface = Number.isFinite(Number(item?.surfaceM2))
-    ? String(Math.round(Number(item.surfaceM2) / 5) * 5)
-    : 'na';
-  const price = Number.isFinite(Number(item?.totalChf)) && Number(item?.totalChf) > 0
-    ? String(Math.round(Number(item.totalChf) / 50) * 50)
-    : 'na';
-
-  if (rooms === 'na' && surface === 'na' && price === 'na') return null;
-
-  return `${address}|r:${rooms}|s:${surface}|p:${price}`;
-}
-
-function listingQualityRank(item, trackerMap) {
-  let rank = 0;
-
-  if (trackerMap?.has(String(item?.id))) rank += 1000;
-  rank += SOURCE_PRIORITY[item?.source] || 0;
-  rank += Math.min(Array.isArray(item?.imageUrls) ? item.imageUrls.length : 0, 6);
-  if (toPositiveNumber(item?.surfaceM2) != null) rank += 2;
-  if (toPositiveNumber(item?.totalChf) != null) rank += 2;
-  if (parseFlatfoxPriceFromText(item?.priceRaw || '') != null) rank += 1;
-
-  return rank;
-}
-
-function dedupeCrossSourceListings(items = [], trackerMap) {
-  const byKey = new Map();
-  const passthrough = [];
-  const removedIds = new Set();
-
-  for (const item of items) {
-    if (item?.anibisSearchUrlMatch === true) {
-      passthrough.push({ ...item, duplicateSources: [item.source] });
-      continue;
-    }
-
-    const key = buildCrossSourceDedupKey(item);
-    if (!key) {
-      passthrough.push({ ...item, duplicateSources: [item.source] });
-      continue;
-    }
-
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, { ...item, duplicateSources: [item.source] });
-      continue;
-    }
-
-    const keepIncoming = listingQualityRank(item, trackerMap) > listingQualityRank(existing, trackerMap);
-    const loser = keepIncoming ? existing : item;
-    const winner = keepIncoming ? { ...item } : { ...existing };
-
-    const combined = new Set([
-      ...(Array.isArray(existing.duplicateSources) ? existing.duplicateSources : [existing.source]),
-      item.source,
-      winner.source
-    ]);
-
-    winner.duplicateSources = [...combined];
-    byKey.set(key, winner);
-
-    // Track which IDs were deduped away so the merge loop can handle them
-    if (loser.id && String(loser.id) !== String(winner.id)) {
-      removedIds.add(String(loser.id));
-    }
-  }
-
-  const kept = [...byKey.values(), ...passthrough];
-  return { kept, removedIds };
 }
 
 function toMap(list = []) {
@@ -2736,14 +2620,54 @@ async function main() {
     delete config.preferences.transportToLausanne;
   }
 
-  const progressSteps = buildProgressPlan(config);
+  const areas = Array.isArray(config.areas) ? config.areas : [];
+  const pagesPerArea = Math.max(1, Number(config.pagesPerArea) || 1);
+  const enabledSources = [
+    { key: 'immobilier', label: 'immobilier.ch' },
+    config.sources?.flatfox !== false && { key: 'flatfox', label: 'flatfox.ch' },
+    config.sources?.naef !== false && { key: 'naef', label: 'naef.ch' },
+    config.sources?.bernardNicod !== false && { key: 'bernard-nicod', label: 'bernard-nicod.ch' },
+    config.sources?.retraitesListings !== false && { key: 'retraites-populaires', label: 'Retraites Populaires' },
+    config.sources?.anibis !== false && { key: 'anibis', label: 'anibis.ch' }
+  ].filter(Boolean);
+  const progressPhases = [
+    { key: 'prepare-listings', label: 'Préparation des annonces', kind: 'phase' },
+    config.sources?.flatfox !== false && { key: 'flatfox-recheck', label: 'Vérification Flatfox', kind: 'phase' },
+    { key: 'dedupe', label: 'Tri et déduplication', kind: 'phase' },
+    { key: 'saving', label: 'Images et sauvegarde', kind: 'phase' }
+  ].filter(Boolean);
+  const progressRows = [
+    ...enabledSources.map((source) => ({ ...source, kind: 'source' })),
+    ...progressPhases
+  ];
+  const immobilierUnits = areas.length * pagesPerArea;
+  const sourceUnits = enabledSources.filter((source) => source.key !== 'immobilier').length;
+  const postProcessingUnits = config.sources?.flatfox !== false ? 4 : 3;
+  const totalUnits = immobilierUnits + sourceUnits + postProcessingUnits;
   let progressDone = 0;
-  const startStep = (currentStep) => emitProgress({ done: progressDone, total: progressSteps.length, currentStep });
-  const completeStep = (currentStep) => {
-    progressDone = Math.min(progressSteps.length, progressDone + 1);
-    emitProgress({ done: progressDone, total: progressSteps.length, currentStep });
+  const emitStructuredProgress = (event) => {
+    const currentStep = event.message || event.currentStep || 'Scan en cours';
+    emitProgress({
+      ...event,
+      total: totalUnits,
+      done: progressDone,
+      totalUnits,
+      completedUnits: progressDone,
+      sources: progressRows,
+      currentStep,
+      currentMessage: event.currentMessage || currentStep
+    });
   };
-  emitProgress({ done: 0, total: progressSteps.length, currentStep: 'Préparation du scan' });
+  const completeUnit = (event) => {
+    const units = Math.max(1, Number(event.units ?? 1) || 1);
+    progressDone = Math.min(totalUnits, progressDone + units);
+    emitStructuredProgress({ ...event, units });
+  };
+  emitStructuredProgress({
+    type: 'phase:start',
+    phase: 'preparing',
+    message: 'Préparation du scan'
+  });
 
   const missingScansBeforeRemoved = Math.max(1, Number(config.filters?.missingScansBeforeRemoved ?? 2));
 
@@ -2769,75 +2693,169 @@ async function main() {
   const trackerMap = toMap(tracker.listings || []);
   const targetAreaSet = buildTargetAreaSet(config.areas || []);
 
-  const scraped = [];
+  // Stubs (slimmed historical entries) carry just enough metadata to suppress
+  // re-discovery. Build lookup sets so freshly-scraped listings whose id or
+  // dedupKey matches a stub can be skipped without re-fetching/re-evaluating.
+  const stubIds = new Set();
+  const stubDedupKeys = new Set();
+  for (const entry of tracker.listings || []) {
+    if (isStub(entry)) {
+      if (entry.id != null) stubIds.add(String(entry.id));
+      if (entry.dedupKey) stubDedupKeys.add(entry.dedupKey);
+    }
+  }
 
-  for (const area of config.areas || []) {
+  const scraped = [];
+  const sourceFailures = [];
+
+  const immobilierTasks = [];
+  for (const area of areas) {
     const canton = resolveImmobilierCanton(area, config);
     const areaLabel = String(area?.label || '').trim();
     const configuredSlug = normalizeSlugCandidate(area?.slug || '');
     const immobilierSlug = await resolveImmobilierSlugForArea(area, config);
+    const finalSlug = immobilierSlug || configuredSlug;
 
     if (immobilierSlug && configuredSlug && immobilierSlug !== configuredSlug) {
       console.log(`INFO immobilier slug auto-resolved for "${areaLabel}": ${configuredSlug} -> ${immobilierSlug}`);
     }
 
-    for (let page = 1; page <= (config.pagesPerArea || 1); page++) {
-      const progressLabel = `immobilier.ch · ${areaLabel || configuredSlug || 'zone'} · page ${page}`;
-      startStep(progressLabel);
-      const url = `https://www.immobilier.ch/fr/louer/appartement/${canton}/${immobilierSlug || configuredSlug}/page-${page}`;
-      try {
-        const html = await fetchHtml(url);
-        const items = parseListingsFromHtml(html, areaLabel);
-
-        // debug disabled
-        for (const item of items) {
-          if (!isTargetAreaCity(item.area || '', targetAreaSet)) continue;
-          scraped.push(item);
-        }
-      } catch (err) {
-        console.error(`WARN ${url}: ${err.message}`);
-      } finally {
-        completeStep(progressLabel);
-      }
+    for (let page = 1; page <= pagesPerArea; page += 1) {
+      immobilierTasks.push({ areaLabel, configuredSlug, canton, finalSlug, page });
     }
   }
 
-  if (config.sources?.flatfox !== false) {
-    startStep('flatfox.ch');
-    const flatfoxItems = await scrapeFlatfoxListings(config);
-    scraped.push(...flatfoxItems);
-    completeStep('flatfox.ch');
+  emitStructuredProgress({
+    type: 'source:start',
+    source: 'immobilier.ch',
+    phase: 'sources',
+    message: 'immobilier.ch: recherche des annonces'
+  });
+  let immobilierPageFailures = 0;
+  const immobilierResults = await runLimited(
+    immobilierTasks,
+    Number(config.scanConcurrency?.immobilierPages ?? 3),
+    async (task) => {
+      const progressLabel = `immobilier.ch · ${task.areaLabel || task.configuredSlug || 'zone'} · page ${task.page}`;
+      const url = `https://www.immobilier.ch/fr/louer/appartement/${task.canton}/${task.finalSlug}/page-${task.page}`;
+      try {
+        const html = await fetchHtml(url);
+        const items = parseListingsFromHtml(html, task.areaLabel);
+        return items.filter((item) => isTargetAreaCity(item.area || '', targetAreaSet));
+      } catch (err) {
+        immobilierPageFailures += 1;
+        console.error(`WARN ${url}: ${err.message}`);
+        return [];
+      } finally {
+        completeUnit({
+          type: 'unit:done',
+          source: 'immobilier.ch',
+          phase: 'sources',
+          message: `${progressLabel} terminée`
+        });
+      }
+    }
+  );
+  const immobilierItems = immobilierResults.flat();
+  scraped.push(...immobilierItems);
+  if (immobilierPageFailures > 0) {
+    const error = `${immobilierPageFailures} page${immobilierPageFailures > 1 ? 's' : ''} en erreur`;
+    emitStructuredProgress({
+      type: 'source:error',
+      source: 'immobilier.ch',
+      phase: 'sources',
+      error,
+      found: immobilierItems.length,
+      message: `immobilier.ch: ${error}`
+    });
+    sourceFailures.push(`immobilier.ch: ${error}`);
+  } else {
+    emitStructuredProgress({
+      type: 'source:done',
+      source: 'immobilier.ch',
+      phase: 'sources',
+      found: immobilierItems.length,
+      message: `immobilier.ch: ${immobilierItems.length} annonces`
+    });
   }
 
-  if (config.sources?.naef !== false) {
-    startStep('naef.ch');
-    const naefItems = await scrapeNaefListings(config);
-    scraped.push(...naefItems);
-    completeStep('naef.ch');
+  const sourceTasks = [
+    config.sources?.flatfox !== false && {
+      label: 'flatfox.ch',
+      run: () => scrapeFlatfoxListings(config)
+    },
+    config.sources?.naef !== false && {
+      label: 'naef.ch',
+      run: () => scrapeNaefListings(config)
+    },
+    config.sources?.bernardNicod !== false && {
+      label: 'bernard-nicod.ch',
+      run: () => scrapeBernardNicodListings(config, geocodeCache)
+    },
+    config.sources?.retraitesListings !== false && {
+      label: 'Retraites Populaires',
+      run: () => scrapeRetraitesPopulairesListings(config)
+    },
+    config.sources?.anibis !== false && {
+      label: 'anibis.ch',
+      run: () => scrapeAnibisListings(config)
+    }
+  ].filter(Boolean);
+
+  const sourceResults = await runLimited(
+    sourceTasks,
+    Number(config.scanConcurrency?.sources ?? 3),
+    async (task) => {
+      emitStructuredProgress({
+        type: 'source:start',
+        source: task.label,
+        phase: 'sources',
+        message: `${task.label}: recherche des annonces`
+      });
+
+      try {
+        const items = await task.run();
+        if (!Array.isArray(items)) {
+          throw new Error(`${task.label} scraper returned non-array result`);
+        }
+        completeUnit({
+          type: 'source:done',
+          source: task.label,
+          phase: 'sources',
+          found: items.length,
+          units: 1,
+          message: `${task.label}: ${items.length} annonces`
+        });
+        return items;
+      } catch (err) {
+        const message = err?.message || String(err);
+        console.error(`WARN ${task.label}: ${message}`);
+        completeUnit({
+          type: 'source:error',
+          source: task.label,
+          phase: 'sources',
+          error: message,
+          units: 1,
+          message: `${task.label}: erreur`
+        });
+        sourceFailures.push(`${task.label}: ${message}`);
+        return [];
+      }
+    }
+  );
+  scraped.push(...sourceResults.flat());
+
+  if (sourceFailures.length > 0) {
+    throw new Error(`Scan interrompu: ${sourceFailures.join('; ')}`);
   }
 
-  if (config.sources?.bernardNicod !== false) {
-    startStep('bernard-nicod.ch');
-    const bernardItems = await scrapeBernardNicodListings(config);
-    scraped.push(...bernardItems);
-    completeStep('bernard-nicod.ch');
-  }
-
-  if (config.sources?.retraitesListings !== false) {
-    startStep('Retraites Populaires');
-    const rpListings = await scrapeRetraitesPopulairesListings(config);
-    scraped.push(...rpListings);
-    completeStep('Retraites Populaires');
-  }
-
-  if (config.sources?.anibis !== false) {
-    startStep('anibis.ch');
-    const anibisItems = await scrapeAnibisListings(config);
-    scraped.push(...anibisItems);
-    completeStep('anibis.ch');
-  }
-
-  startStep('Préparation des annonces');
+  emitStructuredProgress({
+    type: 'source:start',
+    source: 'Préparation des annonces',
+    kind: 'phase',
+    phase: 'preparing-listings',
+    message: 'Préparation des annonces'
+  });
 
   const dedupById = new Map();
   for (const item of scraped) {
@@ -2853,10 +2871,22 @@ async function main() {
     dedupById.set(key, incomingRank > existingRank ? item : existing);
   }
 
-  completeStep('Préparation des annonces');
+  completeUnit({
+    type: 'source:done',
+    source: 'Préparation des annonces',
+    kind: 'phase',
+    phase: 'preparing-listings',
+    message: 'Préparation des annonces terminée'
+  });
 
   if (config.sources?.flatfox !== false) {
-    startStep('Vérification Flatfox');
+    emitStructuredProgress({
+      type: 'source:start',
+      source: 'Vérification Flatfox',
+      kind: 'phase',
+      phase: 'flatfox-recheck',
+      message: 'Vérification Flatfox'
+    });
     const recheckLimit = Math.max(0, Number(config.flatfox?.recheckKnownIdsLimit ?? 20));
     const missingKnownFlatfox = (tracker.listings || [])
       .filter((x) => x?.source === 'flatfox.ch' && x?.sourceId && !dedupById.has(String(x.id)))
@@ -2873,10 +2903,22 @@ async function main() {
         dedupById.set(key, recovered);
       }
     }
-    completeStep('Vérification Flatfox');
+    completeUnit({
+      type: 'source:done',
+      source: 'Vérification Flatfox',
+      kind: 'phase',
+      phase: 'flatfox-recheck',
+      message: 'Vérification Flatfox terminée'
+    });
   }
 
-  startStep('Tri et déduplication');
+  emitStructuredProgress({
+    type: 'source:start',
+    source: 'Tri et déduplication',
+    kind: 'phase',
+    phase: 'dedupe',
+    message: 'Tri et déduplication'
+  });
 
   const { kept: crossSourceDeduped, removedIds: crossSourceRemovedIds } = dedupeCrossSourceListings([...dedupById.values()], trackerMap);
   const dedup = new Map(crossSourceDeduped.map((item) => [String(item.id), item]));
@@ -2890,6 +2932,16 @@ async function main() {
   const merged = [];
 
   for (const item of dedup.values()) {
+    // Suppress re-discovery: if this item matches a stubbed historical entry
+    // (by id or by composite dedup key), skip processing entirely. The stub
+    // already in `merged` (added by the loop below over tracker.listings)
+    // represents this listing's filtered/removed state; re-promoting it here
+    // would resurrect a previously-rejected listing without the user changing
+    // any criteria.
+    if (stubIds.has(String(item.id))) continue;
+    const itemDedupKey = buildCrossSourceDedupKey(item);
+    if (itemDedupKey && stubDedupKeys.has(itemDedupKey)) continue;
+
     item.lastSeenAt = now;
 
     const minBudget = Number(config.filters?.minTotalChf ?? 0);
@@ -2937,13 +2989,13 @@ async function main() {
         item.entryDateText = isStrictEntryDate(moveInDate) ? moveInDate : null;
         item.entryDateFetched = Boolean(item.entryDateText);
       }
-
-      await computeCommuteFromWork(item, workAddress, workCoords, geocodeCache, routeCache);
     } else {
       item.entryDateText = null;
       item.entryDateFetched = false;
-      await computeCommuteFromWork(item, workAddress, workCoords, geocodeCache, routeCache);
     }
+    // Commute is computed in a separate phase by recompute-distances.mjs after
+    // the scan finishes, so the modal can close as soon as listings are ready.
+    item.commutePending = true;
 
     if (!item.display) {
       if (item.excludedType) item.filterReason = 'Type exclu (chambre/colocation)';
@@ -2964,13 +3016,20 @@ async function main() {
       const previousValidDate = isStrictEntryDate(existing.entryDateText) ? existing.entryDateText : null;
       const apiProvidedDate = isStrictEntryDate(item.entryDateText) ? item.entryDateText : null;
       const entryDateText = item.entryDateFetched ? apiProvidedDate : previousValidDate;
+      const retainedCommute = projectRetainedCommuteFields(existing, {
+        visible: item.display !== false,
+        workAddress,
+        workCoords
+      });
+      const commutePending = item.display !== false && needsCommuteRecompute(retainedCommute);
 
       merged.push({
         ...existing,
         ...item,
         pinned: !!existing.pinned,
         entryDateText,
-        ...projectCommuteFields(item, { visible: item.display !== false, workAddress }),
+        ...retainedCommute,
+        commutePending,
         publishedAt: item.publishedAt || existing.publishedAt || null,
         status: normalizeStatus(existing.status || 'À trier'),
         notes: mergeNotesWithEntryDate(existing.notes || '', entryDateText),
@@ -2983,10 +3042,13 @@ async function main() {
       });
     } else {
       const entryDateText = isStrictEntryDate(item.entryDateText) ? item.entryDateText : null;
+      const cleared = clearedCommuteFields();
+      cleared.distanceFromWorkAddress = workAddress;
       merged.push({
         ...item,
         entryDateText,
-        ...projectCommuteFields(item, { visible: item.display !== false, workAddress }),
+        ...cleared,
+        commutePending: item.display !== false,
         publishedAt: item.publishedAt || null,
         status: 'À trier',
         notes: mergeNotesWithEntryDate('', entryDateText),
@@ -3000,49 +3062,27 @@ async function main() {
     }
   }
 
-  function clearedCommuteFields() {
-    return {
-      distanceKm: null,
-      distanceText: '',
-      driveMinutes: null,
-      driveText: '',
-      driveRouteStatus: 'missing-address',
-      transitMinutes: null,
-      transitText: '',
-      transitRouteStatus: 'missing-address',
-      transitRouteLabel: 'Arrivée 08:00',
-      transitRouteComputedAt: null,
-      transitRoute: null,
-      transitRouteOverlay: null,
-      commuteWarnings: [],
-      distanceComputed: false,
-      distanceFromWorkAddress: ''
-    };
-  }
-
-  function projectCommuteFields(source, { visible, workAddress: fallbackWorkAddress }) {
-    if (!visible) return clearedCommuteFields();
-
-    return {
-      distanceKm: source.distanceComputed ? source.distanceKm : null,
-      distanceText: source.distanceComputed ? source.distanceText || '' : '',
-      driveMinutes: toDurationMinutesOrNull(source.driveMinutes),
-      driveText: formatMinutesText(source.driveMinutes),
-      driveRouteStatus: source.driveRouteStatus || 'missing-address',
-      transitMinutes: toDurationMinutesOrNull(source.transitMinutes),
-      transitText: formatMinutesText(source.transitMinutes),
-      transitRouteStatus: source.transitRouteStatus || 'missing-address',
-      transitRouteLabel: source.transitRouteLabel || 'Arrivée 08:00',
-      transitRouteComputedAt: source.transitRouteComputedAt || null,
-      transitRoute: source.transitRoute || null,
-      transitRouteOverlay: source.transitRouteOverlay || null,
-      commuteWarnings: Array.isArray(source.commuteWarnings) ? source.commuteWarnings : [],
-      distanceComputed: !!source.distanceComputed,
-      distanceFromWorkAddress: source.distanceFromWorkAddress || fallbackWorkAddress
-    };
+  function needsCommuteRecompute(commuteFields) {
+    if (!commuteFields) return true;
+    if (commuteFields.driveRouteStatus === 'route-failed') return true;
+    if (commuteFields.transitRouteStatus === 'route-failed') return true;
+    if (commuteFields.driveRouteStatus === 'geocode-failed') return true;
+    if (commuteFields.transitRouteStatus === 'geocode-failed') return true;
+    if (commuteFields.driveRouteStatus === 'cached-stale') return true;
+    if (commuteFields.transitRouteStatus === 'cached-stale') return true;
+    if (commuteFields.driveMinutes == null && commuteFields.transitMinutes == null) return true;
+    return false;
   }
 
   for (const old of tracker.listings || []) {
+    // Stubs are already-discarded entries kept only to suppress re-discovery.
+    // Pass them through unchanged — no eligibility re-evaluation possible
+    // since the full payload has been dropped.
+    if (isStub(old)) {
+      merged.push(old);
+      continue;
+    }
+
     if (!dedup.has(String(old.id))) {
       // If this listing was explicitly removed by cross-source dedup (enriched data
       // matched another active listing), mark it as a duplicate — not as "missing".
@@ -3211,6 +3251,7 @@ async function main() {
   }
 
   for (const item of merged) {
+    if (isStub(item)) continue;
     delete item.isPearl;
     delete item.score;
     delete item.scoreBreakdown;
@@ -3218,21 +3259,37 @@ async function main() {
   }
 
   merged.sort((a, b) => {
+    // Stubs sort last (after active and after non-stub removed entries).
+    const aStub = isStub(a) ? 1 : 0;
+    const bStub = isStub(b) ? 1 : 0;
+    if (aStub !== bStub) return aStub - bStub;
     const av = a.active ? 1 : 0;
     const bv = b.active ? 1 : 0;
     if (av !== bv) return bv - av;
     return (a.totalChf || 999999) - (b.totalChf || 999999);
   });
 
-  normalizeListingImageFields(merged);
+  normalizeListingImageFields(merged.filter((x) => !isStub(x)));
 
-  const visibleActive = merged.filter((x) => x.active && x.display !== false);
-  const visibleRemoved = merged.filter((x) => !x.active && x.display !== false && x.isRemoved);
-  const visibleAll = merged.filter((x) => x.display !== false);
+  const visibleActive = merged.filter((x) => !isStub(x) && x.active && x.display !== false);
+  const visibleRemoved = merged.filter((x) => !isStub(x) && !x.active && x.display !== false && x.isRemoved);
+  const visibleAll = merged.filter((x) => !isStub(x) && x.display !== false);
 
   // Archive images only while flats are still visible/active.
-  completeStep('Tri et déduplication');
-  startStep('Images et sauvegarde');
+  completeUnit({
+    type: 'source:done',
+    source: 'Tri et déduplication',
+    kind: 'phase',
+    phase: 'dedupe',
+    message: 'Tri et déduplication terminés'
+  });
+  emitStructuredProgress({
+    type: 'source:start',
+    source: 'Images et sauvegarde',
+    kind: 'phase',
+    phase: 'saving',
+    message: 'Images et sauvegarde'
+  });
   await localizeVisibleListingImages(visibleActive, config);
 
   const matching = visibleActive;
@@ -3249,20 +3306,65 @@ async function main() {
     all: visibleAll
   };
 
+  // Slim discarded entries to compact stubs (id, dedupKey, filterReason,
+  // timestamps). Existing stubs are passed through unchanged. Then drop
+  // stubs older than 90 days so tracker.json stays bounded.
+  let newlyStubbed = 0;
+  const persisted = [];
+  for (const entry of merged) {
+    if (isStub(entry)) {
+      persisted.push(entry);
+      continue;
+    }
+    if (entry.isRemoved === true || entry.display === false) {
+      const stub = toDiscardedStub(entry);
+      if (stub) {
+        persisted.push(stub);
+        newlyStubbed += 1;
+      }
+      continue;
+    }
+    persisted.push(entry);
+  }
+
+  const STUB_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - STUB_TTL_MS;
+  const isExpiredStub = (entry) => {
+    if (!isStub(entry)) return false;
+    const newest = entry.removedAt || entry.lastSeenAt || entry.firstSeenAt;
+    if (!newest) return false; // no timestamp → keep, can't reason about age
+    const ts = Date.parse(newest);
+    return Number.isFinite(ts) && ts < cutoff;
+  };
+  const prunedListings = persisted.filter((entry) => !isExpiredStub(entry));
+  const prunedCount = persisted.length - prunedListings.length;
+  const finalStubCount = prunedListings.filter(isStub).length;
+  const fullCount = prunedListings.length - finalStubCount;
+
+  console.log(
+    `Tracker: ${prunedListings.length} entries (${fullCount} full + ${finalStubCount} stubs; ${newlyStubbed} stubbed this scan; pruned ${prunedCount} stubs > 90 days)`
+  );
+
   const newTracker = {
     ...tracker,
     updatedAt: now,
     criteria: config,
     statuses: STATUSES,
     statusWorkflowVersion: STATUS_WORKFLOW_VERSION,
-    listings: merged
+    listings: prunedListings
   };
 
   await fs.writeFile(GEOCODE_CACHE_PATH, JSON.stringify(geocodeCache, null, 2));
   await fs.writeFile(ROUTE_CACHE_PATH, JSON.stringify(routeCache, null, 2));
   await fs.writeFile(TRACKER_PATH, JSON.stringify(newTracker, null, 2));
   await fs.writeFile(LATEST_PATH, JSON.stringify(latest, null, 2));
-  completeStep('Images et sauvegarde');
+  completeUnit({
+    type: 'source:done',
+    source: 'Images et sauvegarde',
+    kind: 'phase',
+    phase: 'saving',
+    message: 'Images et sauvegarde terminées'
+  });
 
   console.log(makeSummary(latest));
 }

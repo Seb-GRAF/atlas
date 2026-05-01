@@ -21,6 +21,7 @@ const wrapperStyle: CSSProperties = {
   fontFamily: 'var(--atlas-sans)',
   fontSize: 13,
   fontWeight: 500,
+  whiteSpace: 'nowrap',
   zIndex: 50,
   pointerEvents: 'auto'
 };

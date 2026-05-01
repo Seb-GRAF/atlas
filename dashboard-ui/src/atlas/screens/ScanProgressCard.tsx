@@ -9,11 +9,12 @@ type ScanProgressCardProps = {
   sources: ScanSourceRow[];
   onCancel: () => void;
   onBackground: () => void;
+  finished?: { kind: 'done' | 'error' | 'cancelled'; newCount?: number; message?: string };
 };
 
 const cardStyle: CSSProperties = {
   position: 'absolute',
-  top: 96,
+  top: 76,
   left: 432,
   width: 360,
   padding: '18px 20px',

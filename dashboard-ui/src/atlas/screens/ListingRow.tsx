@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
 import { Icons, Mono, formatCHF } from '../components';
 import type { AtlasListing } from '../types';
 import { CommuteChips } from './CommuteChips';
@@ -9,6 +9,7 @@ type ListingRowProps = {
   selected: boolean;
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
+  pending?: boolean;
 };
 
 const eyebrowStyle: CSSProperties = {
@@ -24,7 +25,8 @@ const wrapperStyle: CSSProperties = {
   position: 'relative',
   borderRadius: 14,
   flexShrink: 0,
-  overflow: 'hidden'
+  overflow: 'hidden',
+  marginBottom: 4
 };
 
 const actionLayerStyle: CSSProperties = {
@@ -52,7 +54,7 @@ const actionPillStyle: CSSProperties = {
 
 const SWIPE_THRESHOLD = 96;
 
-export function ListingRow({ listing, selected, onSelect, onArchive }: ListingRowProps) {
+export function ListingRow({ listing, selected, onSelect, onArchive, pending = false }: ListingRowProps) {
   const cover = listing.images[0];
   const meta = [
     listing.rooms != null ? `${listing.rooms} pces` : null,
@@ -68,6 +70,59 @@ export function ListingRow({ listing, selected, onSelect, onArchive }: ListingRo
       onArchive?.(listing.id);
     }
   });
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [collapsing, setCollapsing] = useState(false);
+  const swipeReset = swipe.reset;
+  const wasSwipedRef = useRef(false);
+
+  useEffect(() => {
+    const node = wrapperRef.current;
+    if (!node) return;
+
+    if (pending) {
+      // Remember whether the row left via swipe — for swipe, the translateX
+      // already animates it offscreen so we skip the in-place fade.
+      wasSwipedRef.current = !!swipe.committed;
+
+      // Lock in the current rendered height as the starting value, then drop
+      // to 0 on the next frame so the browser can transition layout below.
+      const h = node.getBoundingClientRect().height;
+      node.style.height = `${h}px`;
+      void node.offsetHeight;
+      const id = requestAnimationFrame(() => {
+        node.style.height = '0px';
+        setCollapsing(true);
+      });
+      return () => cancelAnimationFrame(id);
+    }
+
+    // Re-opening (undo). Reset any committed swipe state so the row is
+    // visible again instead of stuck offscreen.
+    swipeReset();
+    wasSwipedRef.current = false;
+
+    if (!collapsing && !node.style.height) return;
+
+    node.style.height = '';
+    const target = node.scrollHeight;
+    node.style.height = '0px';
+    void node.offsetHeight;
+    setCollapsing(false);
+    requestAnimationFrame(() => {
+      node.style.height = `${target}px`;
+    });
+
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target !== node) return;
+      if (e.propertyName !== 'height') return;
+      node.style.height = '';
+      node.removeEventListener('transitionend', onEnd);
+    };
+    node.addEventListener('transitionend', onEnd);
+    return () => node.removeEventListener('transitionend', onEnd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, swipeReset]);
 
   const suppressClickRef = useRef(false);
 
@@ -105,8 +160,21 @@ export function ListingRow({ listing, selected, onSelect, onArchive }: ListingRo
   const past = Math.abs(tx) > SWIPE_THRESHOLD;
   const actionOpacity = swipeEnabled ? Math.min(1, Math.abs(tx) / SWIPE_THRESHOLD) : 0;
 
+  const fadeOnCollapse = collapsing && !wasSwipedRef.current;
+  const collapseStyle: CSSProperties = {
+    transition:
+      'height 260ms cubic-bezier(.2,.7,.2,1), opacity 200ms ease, margin-bottom 260ms cubic-bezier(.2,.7,.2,1)',
+    opacity: fadeOnCollapse ? 0 : 1,
+    marginBottom: collapsing ? 0 : 4,
+    pointerEvents: pending ? 'none' : undefined
+  };
+
   return (
-    <div style={wrapperStyle}>
+    <div
+      ref={wrapperRef}
+      style={{ ...wrapperStyle, ...collapseStyle }}
+      aria-hidden={pending || undefined}
+    >
       {swipeEnabled && tx !== 0 ? (
         <div
           style={{

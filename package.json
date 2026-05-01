@@ -9,6 +9,7 @@
     "dev:mobile": "node scripts/dev-mobile.mjs",
     "dev:api": "node scripts/serve-dashboard.mjs",
     "scan": "node scripts/scrape-immobilier.mjs",
+    "recompute-commutes": "node scripts/recompute-distances.mjs",
     "dev:ui": "vite --host 127.0.0.1",
     "build:ui": "vite build",
     "test:ui": "vitest run"
@@ -42,5 +43,8 @@
     "vite": "^8.0.10",
     "vitest": "^4.1.5",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "vite-plugin-pwa": "^1.2.0"
   }
 }

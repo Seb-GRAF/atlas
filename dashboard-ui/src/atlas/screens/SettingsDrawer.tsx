@@ -8,6 +8,7 @@ import {
   Hairline,
   Icons,
   Mono,
+  RangeSlider,
   SourceMono,
   formatCHF
 } from '../components';
@@ -32,6 +33,14 @@ const SOURCES: AtlasListingSource[] = [
   'Retraites Populaires',
   'anibis.ch'
 ];
+
+const ROOMS_MIN = 1;
+const ROOMS_MAX = 6;
+const ROOMS_STEP = 0.5;
+
+function formatRooms(value: number): string {
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1);
+}
 
 const drawerStyle: CSSProperties = {
   position: 'absolute',
@@ -283,6 +292,53 @@ export function SettingsDrawer({ profile, onClose, onSave, saving, error }: Sett
               </div>
             </div>
           </div>
+        </Field>
+
+        <Field label="Pièces">
+          {(() => {
+            const roomsMin = draft.roomsMin ?? ROOMS_MIN;
+            const roomsMax = draft.roomsMax ?? ROOMS_MAX;
+            const roomsCapped = roomsMax >= ROOMS_MAX;
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <RangeSlider
+                  min={ROOMS_MIN}
+                  max={ROOMS_MAX}
+                  step={ROOMS_STEP}
+                  valueMin={roomsMin}
+                  valueMax={roomsMax}
+                  ariaLabelMin="Pièces min"
+                  ariaLabelMax="Pièces max"
+                  onChange={({ min, max }) =>
+                    setDraft((d) => ({
+                      ...d,
+                      roomsMin: min,
+                      roomsMax: max >= ROOMS_MAX ? null : max
+                    }))
+                  }
+                />
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    fontFamily: 'var(--atlas-sans)',
+                    fontSize: 12.5,
+                    color: 'var(--atlas-ink-2)'
+                  }}
+                >
+                  <span>
+                    {roomsCapped
+                      ? `≥ ${formatRooms(roomsMin)}`
+                      : `${formatRooms(roomsMin)} – ${formatRooms(roomsMax)}`}
+                    <span style={{ color: 'var(--atlas-ink-3)', marginLeft: 4 }}>pièces</span>
+                  </span>
+                  <span style={{ fontFamily: 'var(--atlas-mono)', color: 'var(--atlas-ink-3)' }}>
+                    {ROOMS_MIN.toFixed(1)}–{ROOMS_MAX.toFixed(1)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </Field>
 
         <Field label="Sources">

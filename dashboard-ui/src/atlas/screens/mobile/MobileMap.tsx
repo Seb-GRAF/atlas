@@ -44,7 +44,7 @@ const rootStyle: CSSProperties = {
 
 const topBarStyle: CSSProperties = {
   position: 'absolute',
-  top: 16,
+  top: 'calc(env(safe-area-inset-top, 0px) + 16px)',
   left: 12,
   right: 12,
   zIndex: 6,
@@ -55,7 +55,7 @@ const topBarStyle: CSSProperties = {
 
 const chipsRowStyle: CSSProperties = {
   position: 'absolute',
-  top: 64,
+  top: 'calc(env(safe-area-inset-top, 0px) + 64px)',
   left: 0,
   right: 0,
   zIndex: 5,
@@ -280,7 +280,7 @@ export function MobileMap({
         style={{
           position: 'absolute',
           right: 12,
-          top: 116,
+          top: 'calc(env(safe-area-inset-top, 0px) + 116px)',
           zIndex: 5
         }}
         onZoomIn={() => mapHandle.current?.zoomIn()}
@@ -298,7 +298,7 @@ export function MobileMap({
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: `calc(env(safe-area-inset-bottom, 16px) + 88px)`,
+            bottom: `calc(env(safe-area-inset-bottom, 16px) + 84px)`,
             zIndex: 6,
             display: 'flex',
             gap: 10,
@@ -307,7 +307,8 @@ export function MobileMap({
             scrollPaddingLeft: 12,
             paddingLeft: 12,
             paddingRight: 12,
-            paddingBottom: 4,
+            paddingTop: 6,
+            paddingBottom: 6,
             WebkitOverflowScrolling: 'touch'
           }}
         >
@@ -360,7 +361,9 @@ function MiniCard({ listing, selected, onSelect, registerRef }: MiniCardProps) {
         cursor: 'pointer',
         outline: selected ? '2px solid var(--atlas-ink)' : 'none',
         outlineOffset: -2,
-        transition: 'outline 140ms ease'
+        transition: 'outline 140ms ease',
+        boxShadow:
+          '0 4px 10px -6px rgba(22, 20, 15, 0.18), 0 0 0 1px rgba(22, 20, 15, 0.04)'
       }}
       onClick={() => onSelect(listing.id)}
     >

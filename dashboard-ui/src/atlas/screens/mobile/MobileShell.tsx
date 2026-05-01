@@ -9,6 +9,7 @@ import { MobileList } from './MobileList';
 import { MobileMap } from './MobileMap';
 import { MobileDetailSheet } from './MobileDetailSheet';
 import { MobileScanSheet } from './MobileScanSheet';
+import { CommuteProgressBanner } from '../CommuteProgressBanner';
 import { MobileTabBar, type MobileTab } from './MobileTabBar';
 import { FiltersSheet } from './FiltersSheet';
 import { UndoToast } from '../UndoToast';
@@ -113,6 +114,18 @@ export function MobileShell() {
     [visibleListings, urlState.stage, urlState.sort]
   );
 
+  // Keep pending items in the rendered list so they animate to height 0
+  // instead of jumping. They are still excluded from `filtered` (and from
+  // selection / map pins / stage counts).
+  const filteredForList = useMemo(() => {
+    if (pendingIds.size === 0) return filtered;
+    const pendingMembers = listings.filter(
+      (l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)
+    );
+    if (pendingMembers.length === 0) return filtered;
+    return sortListings([...filtered, ...pendingMembers], urlState.sort);
+  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort]);
+
   const selected: AtlasListing | null = useMemo(
     () => listings.find((l) => l.id === urlState.listing) ?? null,
     [listings, urlState.listing]
@@ -141,11 +154,7 @@ export function MobileShell() {
     setMode('map');
     if (selected.transitRouteOverlay && selected.transitRouteOverlay.legs.length > 0) {
       setRouteOverlay(selected.transitRouteOverlay);
-      setRouteError(
-        selected.transitRouteOverlay.failedCount > 0
-          ? `${selected.transitRouteOverlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`
-          : null
-      );
+      setRouteError(null);
       return;
     }
     if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
@@ -160,9 +169,6 @@ export function MobileShell() {
           : null
       );
       setRouteOverlay(overlay);
-      if (overlay.failedCount > 0) {
-        setRouteError(`${overlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`);
-      }
     } catch (err) {
       setRouteError(`Impossible de tracer le trajet: ${(err as Error).message}`);
     } finally {
@@ -262,8 +268,9 @@ export function MobileShell() {
       ) : (
         <MobileList
           profile={profile}
-          listings={filtered}
+          listings={filteredForList}
           onArchive={handleArchive}
+          pendingIds={pendingIds}
           stages={stages}
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
@@ -273,6 +280,7 @@ export function MobileShell() {
           onOpenFilters={() => setFiltersOpen(true)}
           sort={urlState.sort}
           onSortChange={(sort) => updateUrl({ sort })}
+          scanStatus={<CommuteProgressBanner scan={scan} />}
         />
       )}
 

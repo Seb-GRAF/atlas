@@ -103,6 +103,7 @@ export type AtlasListing = {
   transitRoute: TransitRoute | null;
   transitRouteOverlay: RouteOverlay | null;
   commuteWarnings: string[];
+  commutePending: boolean;
 
   lat: number | null;
   lon: number | null;

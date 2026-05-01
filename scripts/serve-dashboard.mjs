@@ -3,6 +3,12 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  applyScanProgressEvent,
+  createInitialScanProgress,
+  publicScanProgress
+} from './lib/scan-progress.mjs';
+import { isStub } from './lib/dedup.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +18,7 @@ const DASHBOARD_DIST_DIR = path.join(DASHBOARD_DIR, 'dist');
 const LEGACY_DATA_DIR = path.join(ROOT, 'data');
 const PROFILES_DATA_DIR = path.join(LEGACY_DATA_DIR, 'profiles');
 const SCRAPE_SCRIPT = path.join(ROOT, 'scripts', 'scrape-immobilier.mjs');
+const RECOMPUTE_SCRIPT = path.join(ROOT, 'scripts', 'recompute-distances.mjs');
 
 const PORT = Number(process.env.PORT || 8787);
 const DEFAULT_PROFILE = sanitizeProfileValue(process.env.APARTMENT_PROFILE || process.env.APART_PROFILE || 'vaud-3-pieces');
@@ -22,6 +29,12 @@ const GEO_ADMIN_SEARCH_URL = process.env.GEO_ADMIN_SEARCH_URL || 'https://api3.g
 const MAP_GEOCODE_ON_STATE = process.env.MAP_GEOCODE_ON_STATE !== '0';
 const MAP_GEOCODE_BATCH_LIMIT = Math.max(0, Number(process.env.MAP_GEOCODE_BATCH_LIMIT || 12));
 const BROAD_SWISS_REGION_POINT = { lat: 47.0986213684082, lon: 7.954939365386963 };
+// Upstream PMTiles archive proxied through this server. The protomaps demo
+// bucket doesn't return CORS headers, which iOS Safari rejects (desktop
+// browsers tolerate it). Serving same-origin sidesteps CORS entirely. The
+// archive itself is huge (~135 GB) but the pmtiles client only requests byte
+// ranges, so each request streams a small slice.
+const PMTILES_UPSTREAM = process.env.PMTILES_UPSTREAM || 'https://demo-bucket.protomaps.com/v4.pmtiles';
 const DEFAULT_STATUSES = [
   'À trier',
   'À contacter',
@@ -57,6 +70,21 @@ function sanitizeProfileValue(value, fallback = 'vaud-3-pieces') {
 
 function sanitizeProfile(value = DEFAULT_PROFILE) {
   return sanitizeProfileValue(value, DEFAULT_PROFILE);
+}
+
+function finiteNumberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function firstNonEmptyString(...values) {
+  const value = values.find((item) => item !== undefined && item !== null && String(item).trim() !== '');
+  return value === undefined ? '' : String(value);
 }
 
 function profilePaths(profile) {
@@ -310,6 +338,10 @@ function enrichStateWithMap(tracker, config, geocodeCache) {
   };
 
   for (const item of listings) {
+    // Skip slimmed stubs — no address/area to geocode and no UI payload
+    // either. They'd otherwise be counted in listingsMissingCoordinates,
+    // inflating the warning.
+    if (isStub(item)) continue;
     enrichListing(item, true);
   }
 
@@ -542,6 +574,43 @@ async function serveFile(res, filePath) {
   }
 }
 
+// Stream a byte range from the upstream PMTiles archive. The pmtiles client
+// fetches small ranges (header, root directory, then individual tiles), so we
+// just forward the Range header and pipe the body. Same-origin to the
+// dashboard, which sidesteps the demo bucket's missing CORS headers (the cause
+// of vector layers failing on iOS Safari).
+async function proxyPmtiles(req, res) {
+  try {
+    const headers = {};
+    if (req.headers.range) headers.range = req.headers.range;
+    if (req.headers['if-none-match']) headers['if-none-match'] = req.headers['if-none-match'];
+    if (req.headers['if-modified-since']) headers['if-modified-since'] = req.headers['if-modified-since'];
+
+    const upstream = await fetch(PMTILES_UPSTREAM, { method: req.method, headers });
+
+    const passthrough = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control'];
+    const outHeaders = {};
+    for (const name of passthrough) {
+      const value = upstream.headers.get(name);
+      if (value) outHeaders[name] = value;
+    }
+    if (!outHeaders['content-type']) outHeaders['content-type'] = 'application/octet-stream';
+    if (!outHeaders['accept-ranges']) outHeaders['accept-ranges'] = 'bytes';
+    if (!outHeaders['cache-control']) outHeaders['cache-control'] = 'public, max-age=3600';
+
+    res.writeHead(upstream.status, outHeaders);
+    if (req.method === 'HEAD' || !upstream.body) {
+      res.end();
+      return;
+    }
+    const { Readable } = await import('node:stream');
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (err) {
+    res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end(`PMTiles upstream error: ${err.message}`);
+  }
+}
+
 async function serveSpaIndex(res) {
   const indexPath = path.join(DASHBOARD_DIST_DIR, 'index.html');
   if (await fileExists(indexPath)) return serveFile(res, indexPath);
@@ -572,6 +641,11 @@ async function updateStatus(profile, id, status, notes, options = {}) {
   const item = tracker.listings.find((x) => String(x.id) === String(id));
   if (!item) return false;
 
+  if (isStub(item)) {
+    // Stubs have no full payload to act on. Status changes and reopens
+    // require a fresh scrape that re-discovers the listing.
+    return false;
+  }
   if (status) item.status = normalizeStatus(status);
   if (typeof notes === 'string') item.notes = notes;
   if (options.reopen) {
@@ -642,10 +716,10 @@ async function deleteListing(profile, id) {
   return true;
 }
 
-async function runScan(profile, onProgress = null, onChild = null) {
+async function spawnProgressJob(scriptPath, profile, onProgress = null, onChild = null) {
   const { spawn } = await import('node:child_process');
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SCRAPE_SCRIPT, `--profile=${profile}`], {
+    const child = spawn(process.execPath, [scriptPath, `--profile=${profile}`], {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: onProgress
@@ -658,14 +732,27 @@ async function runScan(profile, onProgress = null, onChild = null) {
     let out = '';
     let err = '';
     let stdoutBuffer = '';
+    let progressError = null;
     const appendStdoutLine = (line) => {
       if (!line) return;
       if (line.startsWith(SCRAPER_PROGRESS_PREFIX)) {
+        let progress;
         try {
-          const progress = JSON.parse(line.slice(SCRAPER_PROGRESS_PREFIX.length));
-          if (onProgress) onProgress(progress);
+          progress = JSON.parse(line.slice(SCRAPER_PROGRESS_PREFIX.length));
         } catch (parseErr) {
           err += `${parseErr.message}\n`;
+          return;
+        }
+
+        if (!onProgress || progressError) return;
+
+        try {
+          onProgress(progress);
+        } catch (callbackErr) {
+          const callbackMessage = callbackErr instanceof Error ? callbackErr.message : String(callbackErr);
+          progressError = new Error(`Scan progress update failed: ${callbackMessage}`);
+          progressError.cause = callbackErr;
+          killScanChild(child);
         }
         return;
       }
@@ -682,6 +769,10 @@ async function runScan(profile, onProgress = null, onChild = null) {
 
     child.on('close', (code, signal) => {
       appendStdoutLine(stdoutBuffer);
+      if (progressError) {
+        reject(progressError);
+        return;
+      }
       if (signal === 'SIGTERM' || signal === 'SIGKILL') {
         const cancelErr = new Error('Scan annulé');
         cancelErr.cancelled = true;
@@ -692,6 +783,14 @@ async function runScan(profile, onProgress = null, onChild = null) {
       else reject(new Error(err || out || `Scan failed (${code})`));
     });
   });
+}
+
+async function runScan(profile, onProgress = null, onChild = null) {
+  return spawnProgressJob(SCRAPE_SCRIPT, profile, onProgress, onChild);
+}
+
+async function runCommute(profile, onProgress = null, onChild = null) {
+  return spawnProgressJob(RECOMPUTE_SCRIPT, profile, onProgress, onChild);
 }
 
 function killScanChild(child) {
@@ -716,9 +815,11 @@ function createScanJob(profile) {
     total: 0,
     done: 0,
     currentStep: 'Préparation du scan',
+    progress: createInitialScanProgress(),
     startedAt: new Date().toISOString(),
     cancelled: false,
-    child: null
+    child: null,
+    commute: null
   };
   scanJobs.set(jobId, job);
 
@@ -728,9 +829,60 @@ function createScanJob(profile) {
       const summary = await runScan(
         profile,
         (progress) => {
-          job.total = Number(progress.total || job.total || 0);
-          job.done = Number(progress.done || 0);
-          job.currentStep = String(progress.currentStep || job.currentStep || '');
+          if (progress.type) {
+            job.progress = applyScanProgressEvent(job.progress, progress);
+            const publicProgress = publicScanProgress(job.progress);
+            job.total = firstDefined(
+              finiteNumberOrNull(progress.totalUnits),
+              finiteNumberOrNull(publicProgress.totalUnits),
+              finiteNumberOrNull(progress.total),
+              finiteNumberOrNull(job.total),
+              0
+            );
+            job.done = firstDefined(
+              finiteNumberOrNull(progress.completedUnits),
+              finiteNumberOrNull(publicProgress.completedUnits),
+              finiteNumberOrNull(progress.done),
+              0
+            );
+            job.currentStep = firstNonEmptyString(
+              publicProgress.currentMessage,
+              progress.currentMessage,
+              progress.message,
+              progress.currentStep,
+              job.currentStep,
+              ''
+            );
+            job.phase = publicProgress.phase;
+            job.sources = publicProgress.sources;
+            job.totalUnits = firstDefined(
+              finiteNumberOrNull(progress.totalUnits),
+              finiteNumberOrNull(publicProgress.totalUnits),
+              finiteNumberOrNull(progress.total),
+              finiteNumberOrNull(job.total),
+              0
+            );
+            job.completedUnits = firstDefined(
+              finiteNumberOrNull(progress.completedUnits),
+              finiteNumberOrNull(publicProgress.completedUnits),
+              finiteNumberOrNull(progress.done),
+              0
+            );
+            job.currentMessage = firstNonEmptyString(
+              publicProgress.currentMessage,
+              progress.currentMessage,
+              progress.message,
+              job.currentStep,
+              ''
+            );
+            job.updatedAt = publicProgress.updatedAt;
+            return;
+          }
+
+          job.total = firstDefined(finiteNumberOrNull(progress.total), finiteNumberOrNull(job.total), 0);
+          job.done = firstDefined(finiteNumberOrNull(progress.done), 0);
+          job.currentStep = firstNonEmptyString(progress.currentStep, job.currentStep, '');
+          job.currentMessage = job.currentStep;
           job.updatedAt = progress.at || new Date().toISOString();
         },
         (child) => {
@@ -742,19 +894,107 @@ function createScanJob(profile) {
       job.status = 'done';
       job.summary = summary;
       job.newCount = newCount;
-      job.done = job.total || job.done;
+      job.done = firstDefined(finiteNumberOrNull(job.total), finiteNumberOrNull(job.done), 0);
+      job.completedUnits = firstDefined(
+        finiteNumberOrNull(job.totalUnits),
+        finiteNumberOrNull(job.completedUnits),
+        finiteNumberOrNull(job.done),
+        0
+      );
+      job.currentMessage = 'Scan terminé';
       job.currentStep = 'Scan terminé';
       job.finishedAt = new Date().toISOString();
+      job.child = null;
     } catch (err) {
       if (job.cancelled || err.cancelled) {
         job.status = 'cancelled';
         job.currentStep = 'Scan annulé';
+        job.currentMessage = job.currentStep;
       } else {
         job.status = 'error';
         job.error = err.message;
         job.currentStep = 'Scan interrompu';
+        job.currentMessage = job.currentStep;
       }
       job.finishedAt = new Date().toISOString();
+      job.child = null;
+      setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
+      return;
+    }
+
+    if (job.cancelled) {
+      setTimeout(() => scanJobs.delete(jobId), 10 * 60 * 1000);
+      return;
+    }
+
+    job.commute = {
+      status: 'running',
+      total: 0,
+      done: 0,
+      lastItem: null,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      finishedAt: null,
+      error: null
+    };
+
+    try {
+      await runCommute(
+        profile,
+        (event) => {
+          if (!event || !event.type) return;
+          const at = event.at || new Date().toISOString();
+          if (event.type === 'commute:start') {
+            job.commute.total = finiteNumberOrNull(event.total) ?? 0;
+            job.commute.done = finiteNumberOrNull(event.done) ?? 0;
+            job.commute.updatedAt = at;
+            return;
+          }
+          if (event.type === 'commute:item') {
+            job.commute.done = finiteNumberOrNull(event.done) ?? job.commute.done;
+            if (event.total != null) {
+              job.commute.total = finiteNumberOrNull(event.total) ?? job.commute.total;
+            }
+            job.commute.lastItem = {
+              id: String(event.id || ''),
+              done: job.commute.done,
+              total: job.commute.total,
+              commute: event.commute || null,
+              at
+            };
+            job.commute.updatedAt = at;
+            return;
+          }
+          if (event.type === 'commute:done') {
+            job.commute.done = finiteNumberOrNull(event.done) ?? job.commute.done;
+            if (event.total != null) {
+              job.commute.total = finiteNumberOrNull(event.total) ?? job.commute.total;
+            }
+            job.commute.status = event.error ? 'error' : 'done';
+            if (event.error) job.commute.error = String(event.error);
+            job.commute.finishedAt = at;
+            job.commute.updatedAt = at;
+          }
+        },
+        (child) => {
+          job.child = child;
+          if (job.cancelled) killScanChild(child);
+        }
+      );
+      if (job.commute.status === 'running') {
+        job.commute.status = 'done';
+        job.commute.finishedAt = new Date().toISOString();
+        job.commute.updatedAt = job.commute.finishedAt;
+      }
+    } catch (err) {
+      if (job.cancelled || err.cancelled) {
+        job.commute.status = 'cancelled';
+      } else {
+        job.commute.status = 'error';
+        job.commute.error = err.message;
+      }
+      job.commute.finishedAt = new Date().toISOString();
+      job.commute.updatedAt = job.commute.finishedAt;
     } finally {
       job.child = null;
     }
@@ -1021,7 +1261,15 @@ const server = http.createServer(async (req, res) => {
     const map = enrichStateWithMap(tracker, config, geocodeCache);
     enrichLatestWithMap(latest, geocodeCache);
 
-    return sendJson(res, 200, { profile, tracker, latest, areas, filters: config?.filters || {}, map });
+    // Strip slimmed stubs from the wire payload — the dashboard's data
+    // adapter assumes full listings, and stubs would render as ghost rows
+    // with empty title/price/area. They live in tracker.json only to
+    // suppress re-discovery on the next scan.
+    const wireTracker = Array.isArray(tracker.listings)
+      ? { ...tracker, listings: tracker.listings.filter((x) => !isStub(x)) }
+      : tracker;
+
+    return sendJson(res, 200, { profile, tracker: wireTracker, latest, areas, filters: config?.filters || {}, map });
   }
 
   if (req.method === 'POST' && u.pathname === '/api/update-status') {
@@ -1064,7 +1312,25 @@ const server = http.createServer(async (req, res) => {
     const jobId = u.searchParams.get('jobId') || '';
     const job = scanJobs.get(jobId);
     if (!job) return sendJson(res, 404, { ok: false, error: 'Job not found' });
-    const { child: _child, ...publicJob } = job;
+    const publicJob = {
+      status: job.status,
+      profile: job.profile,
+      total: job.total,
+      done: job.done,
+      currentStep: job.currentStep,
+      startedAt: job.startedAt,
+      updatedAt: job.updatedAt,
+      finishedAt: job.finishedAt,
+      summary: job.summary,
+      newCount: job.newCount,
+      error: job.error,
+      phase: job.phase,
+      totalUnits: job.totalUnits,
+      completedUnits: job.completedUnits,
+      currentMessage: job.currentMessage,
+      sources: job.sources,
+      commute: job.commute
+    };
     return sendJson(res, 200, { ok: true, ...publicJob });
   }
 
@@ -1168,6 +1434,10 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       return sendJson(res, 400, { ok: false, error: err.message });
     }
+  }
+
+  if ((req.method === 'GET' || req.method === 'HEAD') && u.pathname === '/maps/protomaps.pmtiles') {
+    return proxyPmtiles(req, res);
   }
 
   if (req.method === 'GET' && u.pathname === '/') {

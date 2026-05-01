@@ -77,6 +77,13 @@ export function formatTransitLocation(point, fallbackAddress = '') {
   return String(fallbackAddress || '').trim();
 }
 
+export function buildTransitLocationCacheKey(fromPoint, fromFallback, toPoint, toFallback) {
+  return buildTransitCacheKey(
+    formatTransitLocation(fromPoint, fromFallback),
+    formatTransitLocation(toPoint, toFallback)
+  );
+}
+
 function formatCoordinatePoint(point) {
   const lat = Number(point?.lat);
   const lon = Number(point?.lon);
@@ -125,6 +132,10 @@ function validLngLat(point) {
   const lng = Number(point[0]);
   const lat = Number(point[1]);
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  // Reject the literal {0, 0} sentinel — opendata.ch occasionally returns
+  // placeholder zero coordinates for stations without geocoding, and pulling
+  // them through expands route bounds to span Switzerland → Gulf of Guinea.
+  if (lng === 0 && lat === 0) return null;
   return [lng, lat];
 }
 
@@ -143,6 +154,8 @@ function listingLngLat(coords) {
 function colorForTransitRouteLeg(leg) {
   if (leg?.type === 'walk') return '#8a8377';
   const mode = String(leg?.mode || '').toUpperCase();
+  const line = String(leg?.line || leg?.label || '').toUpperCase();
+  if (mode === 'M' && line === 'M2') return '#e91e63';
   if (mode === 'B') return '#2c7be5';
   if (mode === 'S') return '#2bb673';
   if (mode === 'M') return '#f08c2e';
@@ -164,16 +177,24 @@ function routeLegLabel(leg) {
   return leg?.label || leg?.line || leg?.mode || (leg?.type === 'walk' ? 'WALK' : 'PT');
 }
 
-async function resolveWalkOverlayCoords(leg, isFirstLeg, listingPoint, resolveFootRoute) {
+async function resolveWalkOverlayCoords(leg, isFirstLeg, isLastLeg, listingPoint, workplacePoint, resolveFootRoute) {
   const endpoints = validLngLats(leg?.coords);
   let from = endpoints[0] || null;
   let to = endpoints.length >= 2 ? endpoints[endpoints.length - 1] : null;
 
   if (endpoints.length === 1 && isFirstLeg && listingPoint) {
+    // First walk usually starts at the listing — opendata.ch returns no
+    // station coord for an address, so we got just the destination stop.
     from = listingPoint;
     to = endpoints[0];
+  } else if (endpoints.length === 1 && isLastLeg && workplacePoint) {
+    // Last walk usually ends at the workplace — same address-based gap.
+    from = endpoints[0];
+    to = workplacePoint;
   } else if (!from && isFirstLeg && listingPoint) {
     from = listingPoint;
+  } else if (!to && isLastLeg && workplacePoint) {
+    to = workplacePoint;
   }
 
   const fallback = [];
@@ -196,6 +217,7 @@ async function resolveWalkOverlayCoords(leg, isFirstLeg, listingPoint, resolveFo
 
 export async function buildTransitRouteOverlay(route, options = {}) {
   const listingPoint = listingLngLat(options.listingCoords);
+  const workplacePoint = listingLngLat(options.workplaceCoords);
   const sourceLegs = Array.isArray(route?.legs) ? route.legs : [];
   const legs = [];
   let bounds = null;
@@ -205,7 +227,14 @@ export async function buildTransitRouteOverlay(route, options = {}) {
     const leg = sourceLegs[i];
     const isWalk = leg?.type === 'walk';
     const resolved = isWalk
-      ? await resolveWalkOverlayCoords(leg, i === 0, listingPoint, options.resolveFootRoute)
+      ? await resolveWalkOverlayCoords(
+          leg,
+          i === 0,
+          i === sourceLegs.length - 1,
+          listingPoint,
+          workplacePoint,
+          options.resolveFootRoute
+        )
       : (() => {
           const coords = validLngLats(leg?.coords);
           return { coords, failed: coords.length < 2 };
@@ -250,6 +279,9 @@ function stationLngLat(station) {
   const lat = Number(co.x);
   const lng = Number(co.y);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  // Same {0, 0} guard as validLngLat — opendata.ch returns this for stations
+  // it could not geocode and we don't want it polluting the route bounds.
+  if (lat === 0 && lng === 0) return null;
   return [lng, lat];
 }
 
@@ -481,5 +513,7 @@ export const CLOSED_COMMUTE_STATUSES = new Set(['Accepté', 'Écartée', 'Refus 
 
 export function shouldRecomputeListingCommute(listing) {
   if (!listing || listing.isRemoved) return false;
+  // Stubs are slimmed historical entries; they have no address to geocode.
+  if (listing.isStub === true) return false;
   return !CLOSED_COMMUTE_STATUSES.has(String(listing.status || '').trim());
 }

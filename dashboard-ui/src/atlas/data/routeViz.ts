@@ -96,6 +96,8 @@ async function osrmRoute(
 export function colorForLeg(leg: CommuteLeg): string {
   if (leg.type === 'walk') return '#8a8377';
   const mode = String(leg.mode || '').toUpperCase();
+  const line = String(leg.line || leg.label || '').toUpperCase();
+  if (mode === 'M' && line === 'M2') return '#e91e63';
   if (mode === 'B') return '#2c7be5';
   if (mode === 'S') return '#2bb673';
   if (mode === 'M') return '#f08c2e';
@@ -191,7 +193,7 @@ export async function buildTransitRouteOverlay(
     legs.push({
       kind: leg.type,
       mode: leg.mode,
-      label: leg.label || leg.line || leg.mode || (leg.type === 'walk' ? 'WALK' : 'PT'),
+      label: leg.label || leg.line || leg.mode || (leg.type === 'walk' ? 'MARCHER' : 'PT'),
       color: colorForLeg(leg),
       coords,
       failed,

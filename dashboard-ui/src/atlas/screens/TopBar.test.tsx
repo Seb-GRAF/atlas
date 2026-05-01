@@ -37,7 +37,6 @@ function renderTopBar(overrides: Partial<ComponentProps<typeof TopBar>> = {}) {
       stages={stages}
       stage="triage"
       onStageChange={() => undefined}
-      onOpenSettings={() => undefined}
       onScan={() => undefined}
       scanning={false}
       onProfileSelect={() => undefined}
@@ -55,6 +54,15 @@ function responseJson(payload: unknown, ok = true, status = 200) {
 }
 
 describe('TopBar profile chooser', () => {
+  it('keeps archived listings out of the primary stage tabs', () => {
+    renderTopBar();
+
+    expect(screen.getByRole('button', { name: /à trier/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /en cours/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /visité/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /clos/i })).toBeNull();
+  });
+
   it('opens a chooser, highlights the active profile, and switches to another profile', async () => {
     const onProfileSelect = vi.fn();
     vi.stubGlobal(

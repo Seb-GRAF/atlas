@@ -76,10 +76,14 @@ body,
   min-height: 100%;
 }
 
+html {
+  background: var(--atlas-bg);
+}
+
 body {
   margin: 0;
-  background: var(--mantine-color-gray-0);
-  color: var(--mantine-color-black);
+  background: var(--atlas-bg);
+  color: var(--atlas-ink);
   font-family: var(--atlas-sans);
 }
 
@@ -163,6 +167,18 @@ body {
   }
 
   to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes atlas-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
     transform: translateY(0);
   }
 }

@@ -1,11 +1,10 @@
 import type { CSSProperties } from 'react';
-import { AtlasButton, Hairline, Icons } from '../components';
+import { AtlasButton, Icons } from '../components';
 
 type EmptyListPanelProps = {
   zonesCount: number;
   sources: string[];
   onScan: () => void;
-  onOpenSettings: () => void;
 };
 
 const wrapperStyle: CSSProperties = {
@@ -72,21 +71,6 @@ const sourcesFooterStyle: CSSProperties = {
   color: 'var(--atlas-ink-3)'
 };
 
-const settingsLinkStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '12px 18px',
-  fontFamily: 'var(--atlas-sans)',
-  fontSize: 12,
-  color: 'var(--atlas-ink-3)',
-  background: 'transparent',
-  border: 0,
-  width: '100%',
-  cursor: 'pointer',
-  textAlign: 'left'
-};
-
 function formatSources(sources: string[]): string {
   if (sources.length === 0) return 'Sources actives · —';
   if (sources.length <= 3) return `Sources actives · ${sources.join(', ')}`;
@@ -94,7 +78,7 @@ function formatSources(sources: string[]): string {
   return `Sources actives · ${head} +${sources.length - 3}`;
 }
 
-export function EmptyListPanel({ zonesCount, sources, onScan, onOpenSettings }: EmptyListPanelProps) {
+export function EmptyListPanel({ zonesCount, sources, onScan }: EmptyListPanelProps) {
   return (
     <div style={wrapperStyle}>
       <div style={bodyStyle}>
@@ -130,13 +114,6 @@ export function EmptyListPanel({ zonesCount, sources, onScan, onOpenSettings }: 
           <div style={sourcesFooterStyle}>{formatSources(sources)}</div>
         </div>
       </div>
-      <Hairline />
-      <button type="button" onClick={onOpenSettings} style={settingsLinkStyle}>
-        <Icons.Settings size={13} stroke={1.7} />
-        <span>Régler les zones, le budget et les sources</span>
-        <span style={{ flex: 1 }} />
-        <Icons.Chevron size={13} stroke={1.7} />
-      </button>
     </div>
   );
 }

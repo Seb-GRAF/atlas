@@ -11,6 +11,7 @@ import {
   type AtlasMapPin
 } from '../../components';
 import { loadBasemap, saveBasemap, type Basemap } from '../../mapPrefs';
+import { SourcesFilter } from '../SourcesFilter';
 import type {
   AtlasListing,
   AtlasProfile,
@@ -20,6 +21,7 @@ import type {
 } from '../../types';
 
 const VEVEY_FALLBACK = { lat: 46.47, lon: 6.84, zoom: 11 };
+const MAP_PIN_DETAIL_DELAY_MS = 380;
 
 type MobileMapProps = {
   profile: AtlasProfile;
@@ -29,8 +31,11 @@ type MobileMapProps = {
   stage: AtlasStageValue;
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
-  onOpenFilters: () => void;
+  onOpenProfileSwitcher: () => void;
   routeOverlay?: RouteOverlay | null;
+  sourceListings?: AtlasListing[];
+  sources?: string[];
+  onSourcesChange?: (next: string[]) => void;
 };
 
 const rootStyle: CSSProperties = {
@@ -53,18 +58,7 @@ const topBarStyle: CSSProperties = {
   gap: 8
 };
 
-const chipsRowStyle: CSSProperties = {
-  position: 'absolute',
-  top: 'calc(env(safe-area-inset-top, 0px) + 64px)',
-  left: 0,
-  right: 0,
-  zIndex: 5,
-  display: 'flex',
-  gap: 6,
-  padding: '0 12px',
-  overflowX: 'auto',
-  pointerEvents: 'auto'
-};
+const STAGE_LABEL_FALLBACK = 'À trier';
 
 function formatZonesShort(zones: string[], shortTitle: string) {
   if (zones.length === 0) return shortTitle || 'Filtres';
@@ -80,12 +74,18 @@ export function MobileMap({
   stage,
   onStageChange,
   onSelect,
-  onOpenFilters,
-  routeOverlay
+  onOpenProfileSwitcher,
+  routeOverlay,
+  sourceListings,
+  sources,
+  onSourcesChange
 }: MobileMapProps) {
   const mapHandle = useRef<AtlasMapHandle>(null);
   const carouselRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const filterButtonRef = useRef<HTMLButtonElement | null>(null);
+  const filterPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [basemap, setBasemap] = useState<Basemap>(() => loadBasemap());
   const changeBasemap = useCallback((next: Basemap) => {
     setBasemap(next);
@@ -95,10 +95,11 @@ export function MobileMap({
   // map without opening the detail sheet. Tapping a card or pin still calls
   // `onSelect` which lifts to the URL and opens detail.
   const [focusedId, setFocusedId] = useState<string | null>(null);
-  // Suppress the IntersectionObserver while we're programmatically scrolling
-  // the carousel (e.g. pin tap → scroll mini-card into view) so it doesn't
-  // bounce focus back to whatever passes the centerline mid-animation.
+  const focusSourceRef = useRef<'external' | 'carousel'>('external');
+  // Suppress carousel scroll focus while we're programmatically scrolling
+  // a pin-tapped card into view, so focus doesn't bounce to a mid-animation card.
   const suppressObserverRef = useRef(false);
+  const pendingMapSelectTimerRef = useRef<number | null>(null);
 
   const visible = useMemo(
     () => listings.filter((l) => l.lat != null && l.lon != null && l.totalChf != null),
@@ -128,8 +129,44 @@ export function MobileMap({
   // auto-focus the first listing on mount — that would trump the initial
   // fitBounds in AtlasMap and zoom into a single pin.
   useEffect(() => {
-    if (selectedId) setFocusedId(selectedId);
+    if (selectedId) {
+      focusSourceRef.current = 'external';
+      setFocusedId(selectedId);
+    }
   }, [selectedId]);
+
+  const clearPendingMapSelect = useCallback(() => {
+    if (pendingMapSelectTimerRef.current == null) return;
+    window.clearTimeout(pendingMapSelectTimerRef.current);
+    pendingMapSelectTimerRef.current = null;
+  }, []);
+
+  useEffect(() => clearPendingMapSelect, [clearPendingMapSelect]);
+
+  const handleMapSelect = useCallback(
+    (id: string | null) => {
+      clearPendingMapSelect();
+      if (!id) {
+        setFocusedId(null);
+        return;
+      }
+      focusSourceRef.current = 'external';
+      setFocusedId(id);
+      pendingMapSelectTimerRef.current = window.setTimeout(() => {
+        pendingMapSelectTimerRef.current = null;
+        onSelect(id);
+      }, MAP_PIN_DETAIL_DELAY_MS);
+    },
+    [clearPendingMapSelect, onSelect]
+  );
+
+  const handleCardSelect = useCallback(
+    (id: string) => {
+      clearPendingMapSelect();
+      onSelect(id);
+    },
+    [clearPendingMapSelect, onSelect]
+  );
 
   // Drop a stale focus if the underlying listing leaves the carousel (e.g.
   // stage filter change).
@@ -140,10 +177,8 @@ export function MobileMap({
     });
   }, [carouselListings]);
 
-  // Carousel → map: only commit a new focus once scrolling has settled. We
-  // wait for the native `scrollend` event when available, falling back to a
-  // 140ms debounce after the last scroll tick. Reacting mid-inertia would
-  // otherwise pan the map repeatedly through every card the swipe passes.
+  // Carousel → map: update focus on the next animation frame during scroll so
+  // the background and pin follow the card the user has already swiped into place.
   useEffect(() => {
     const root = carouselRef.current;
     if (!root || carouselListings.length === 0) return;
@@ -170,26 +205,37 @@ export function MobileMap({
     const commit = () => {
       if (suppressObserverRef.current) return;
       const id = computeNearest();
-      if (id) setFocusedId(id);
+      if (id) {
+        focusSourceRef.current = 'carousel';
+        setFocusedId(id);
+      }
     };
 
-    const supportsScrollEnd = 'onscrollend' in root;
-    let timer = 0;
+    let raf = 0;
     const onScroll = () => {
-      if (supportsScrollEnd) return;
-      window.clearTimeout(timer);
-      timer = window.setTimeout(commit, 140);
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        commit();
+      });
     };
     const onScrollEnd = () => commit();
+    const onUserGestureStart = () => {
+      suppressObserverRef.current = false;
+    };
 
     root.addEventListener('scroll', onScroll, { passive: true });
-    if (supportsScrollEnd) {
-      root.addEventListener('scrollend', onScrollEnd);
-    }
+    root.addEventListener('scrollend', onScrollEnd);
+    root.addEventListener('pointerdown', onUserGestureStart, { passive: true });
+    root.addEventListener('touchstart', onUserGestureStart, { passive: true });
+    root.addEventListener('wheel', onUserGestureStart, { passive: true });
     return () => {
       root.removeEventListener('scroll', onScroll);
-      if (supportsScrollEnd) root.removeEventListener('scrollend', onScrollEnd);
-      window.clearTimeout(timer);
+      root.removeEventListener('scrollend', onScrollEnd);
+      root.removeEventListener('pointerdown', onUserGestureStart);
+      root.removeEventListener('touchstart', onUserGestureStart);
+      root.removeEventListener('wheel', onUserGestureStart);
+      if (raf) window.cancelAnimationFrame(raf);
     };
   }, [carouselListings]);
 
@@ -199,6 +245,7 @@ export function MobileMap({
     if (!focusedId) return;
     const card = cardRefs.current.get(focusedId);
     if (!card) return;
+    if (focusSourceRef.current === 'carousel') return;
     suppressObserverRef.current = true;
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
     const t = window.setTimeout(() => {
@@ -207,9 +254,39 @@ export function MobileMap({
     return () => window.clearTimeout(t);
   }, [focusedId]);
 
-  const selected =
-    listings.find((l) => l.id === (selectedId ?? focusedId)) ?? visible[0] ?? null;
+  const activeId = focusedId ?? selectedId;
+  const selected = activeId ? listings.find((l) => l.id === activeId) ?? null : null;
   const zoneLabel = formatZonesShort(profile.zones, profile.shortTitle);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (filterPopoverRef.current?.contains(target)) return;
+      if (filterButtonRef.current?.contains(target)) return;
+      setFilterOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFilterOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [filterOpen]);
+
+  const activeStage = stages.find((s) => s.value === stage);
+  const stageLabelRaw = activeStage?.label ?? STAGE_LABEL_FALLBACK;
+  const stageLabel = stageLabelRaw.replace(/^à\s+/i, '').toLowerCase();
+  const stageCount = activeStage?.count ?? 0;
+  const sourcesActive = (sources?.length ?? 0) > 0;
+  const sourcesSummary = sourcesActive
+    ? sources!.length === 1
+      ? sources![0].replace(/\.ch$/i, '')
+      : `${sources!.length} sources`
+    : null;
 
   return (
     <div style={rootStyle}>
@@ -218,7 +295,7 @@ export function MobileMap({
           ref={mapHandle}
           pins={pins}
           selectedId={selected?.id ?? null}
-          onSelect={(id) => id && onSelect(id)}
+          onSelect={handleMapSelect}
           showWorkplace={!!profile.workplaceCoords}
           workplaceLabel={profile.workplace ? `Travail · ${profile.workplace}` : 'Travail'}
           workplace={profile.workplaceCoords ?? undefined}
@@ -231,12 +308,28 @@ export function MobileMap({
       <div style={topBarStyle}>
         <GlassPill
           as="button"
-          padding="8px 12px"
-          onClick={onOpenFilters}
-          aria-label="Modifier les zones et filtres"
-          style={{ flex: 1, gap: 8, justifyContent: 'flex-start' }}
+          padding="6px 10px 6px 6px"
+          onClick={onOpenProfileSwitcher}
+          aria-label="Choisir un profil"
+          style={{ flex: 1, gap: 8, justifyContent: 'flex-start', minWidth: 0 }}
         >
-          <Icons.Filter size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
+          <span
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 7,
+              background: 'var(--atlas-ink)',
+              color: '#fff',
+              display: 'grid',
+              placeItems: 'center',
+              fontFamily: 'var(--atlas-mono)',
+              fontSize: 11,
+              fontWeight: 600,
+              flex: '0 0 auto'
+            }}
+          >
+            A
+          </span>
           <span
             style={{
               flex: 1,
@@ -250,62 +343,152 @@ export function MobileMap({
               whiteSpace: 'nowrap'
             }}
           >
-            {zoneLabel}
+            {profile.shortTitle || zoneLabel}
           </span>
+          <Icons.ChevronDown size={12} stroke={1.6} style={{ color: 'var(--atlas-ink-3)', flex: '0 0 auto' }} />
         </GlassPill>
-        <GlassPill as="button" padding="8px 10px" aria-label="Filtres" onClick={onOpenFilters}>
-          <Icons.Filter size={15} stroke={1.7} />
-          {profile.newCount > 0 ? (
-            <span
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 999,
-                background: 'var(--atlas-ember)'
-              }}
-            />
+        <button
+          ref={filterButtonRef}
+          type="button"
+          aria-expanded={filterOpen}
+          aria-haspopup="dialog"
+          onClick={() => setFilterOpen((open) => !open)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 12px',
+            borderRadius: 999,
+            border: 0,
+            cursor: 'pointer',
+            background: 'var(--atlas-glass-pill-bg)',
+            backdropFilter: 'var(--atlas-glass-pill-blur)',
+            WebkitBackdropFilter: 'var(--atlas-glass-pill-blur)',
+            boxShadow: 'var(--atlas-shadow-1)',
+            fontFamily: 'var(--atlas-sans)'
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--atlas-ink)' }}>
+            {stageLabel}
+          </span>
+          <span
+            style={{
+              fontFamily: 'var(--atlas-mono)',
+              color: 'var(--atlas-ink-3)',
+              fontSize: 11.5
+            }}
+          >
+            {stageCount}
+          </span>
+          {sourcesSummary ? (
+            <>
+              <span style={{ width: 1, height: 12, background: 'var(--atlas-line)' }} />
+              <span style={{ color: 'var(--atlas-ink-2)', fontSize: 12 }}>{sourcesSummary}</span>
+            </>
           ) : null}
-        </GlassPill>
+          <Icons.ChevronDown size={12} stroke={1.6} style={{ color: 'var(--atlas-ink-3)' }} />
+        </button>
       </div>
 
-      <div style={chipsRowStyle}>
-        {stages.map((s) => {
-          const active = s.value === stage;
-          return (
-            <button
-              key={s.value}
-              type="button"
-              onClick={() => onStageChange(s.value)}
-              style={{
-                padding: '6px 12px',
-                borderRadius: 999,
-                fontSize: 12,
-                fontWeight: 500,
-                fontFamily: 'var(--atlas-sans)',
-                whiteSpace: 'nowrap',
-                background: active
-                  ? 'rgba(22,20,15,.92)'
-                  : 'var(--atlas-glass-pill-bg)',
-                backdropFilter: 'var(--atlas-glass-pill-blur)',
-                WebkitBackdropFilter: 'var(--atlas-glass-pill-blur)',
-                color: active ? '#fff' : 'var(--atlas-ink-2)',
-                // boxShadow: 'var(--atlas-shadow-1)',
-                border: 0,
-                cursor: 'pointer'
-              }}
-            >
-              {s.label} · <span style={{ fontFamily: 'var(--atlas-mono)' }}>{s.count}</span>
-            </button>
-          );
-        })}
-      </div>
+      {filterOpen ? (
+          <div
+            ref={filterPopoverRef}
+            role="dialog"
+            aria-label="Filtres rapides"
+            style={{
+              position: 'fixed',
+              top: 'calc(env(safe-area-inset-top, 0px) + 56px)',
+              left: 12,
+              right: 12,
+              padding: '12px 12px 10px',
+              borderRadius: 14,
+              background: 'var(--atlas-paper)',
+              boxShadow: 'var(--atlas-shadow-2), 0 0 0 1px var(--atlas-line)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              zIndex: 7,
+              animation: 'atlas-popover-in 160ms ease-out',
+              transformOrigin: 'top left'
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span
+                style={{
+                  fontFamily: 'var(--atlas-sans)',
+                  fontSize: 10.5,
+                  fontWeight: 500,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--atlas-ink-3)'
+                }}
+              >
+                Étape
+              </span>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {stages.map((s) => {
+                  const active = s.value === stage;
+                  return (
+                    <button
+                      key={s.value}
+                      type="button"
+                      onClick={() => {
+                        onStageChange(s.value);
+                        setFilterOpen(false);
+                      }}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 500,
+                        fontFamily: 'var(--atlas-sans)',
+                        whiteSpace: 'nowrap',
+                        background: active ? 'var(--atlas-ink)' : 'transparent',
+                        color: active ? '#fff' : 'var(--atlas-ink-2)',
+                        border: 0,
+                        boxShadow: active ? 'none' : 'inset 0 0 0 1px var(--atlas-line)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {s.label} ·{' '}
+                      <span style={{ fontFamily: 'var(--atlas-mono)' }}>{s.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {sourceListings && sources && onSourcesChange ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span
+                  style={{
+                    fontFamily: 'var(--atlas-sans)',
+                    fontSize: 10.5,
+                    fontWeight: 500,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: 'var(--atlas-ink-3)'
+                  }}
+                >
+                  Sources
+                </span>
+                <SourcesFilter
+                  listings={sourceListings}
+                  selected={sources}
+                  onChange={onSourcesChange}
+                  compact
+                />
+              </div>
+            ) : null}
+          </div>
+      ) : null}
 
       <MapControls
         size={40}
         style={{
           position: 'absolute',
           right: 12,
-          top: 'calc(env(safe-area-inset-top, 0px) + 116px)',
+          top: 'calc(env(safe-area-inset-top, 0px) + 64px)',
           zIndex: 5
         }}
         onZoomIn={() => mapHandle.current?.zoomIn()}
@@ -341,12 +524,12 @@ export function MobileMap({
             <MiniCard
               key={listing.id}
               listing={listing}
-              selected={listing.id === (selectedId ?? focusedId)}
+              selected={listing.id === activeId}
               registerRef={(el) => {
                 if (el) cardRefs.current.set(listing.id, el);
                 else cardRefs.current.delete(listing.id);
               }}
-              onSelect={onSelect}
+              onSelect={handleCardSelect}
             />
           ))}
         </div>
@@ -376,7 +559,12 @@ function MiniCard({ listing, selected, onSelect, registerRef }: MiniCardProps) {
     <div
       ref={registerRef}
       data-listing-id={listing.id}
-      style={{ flex: '0 0 280px', scrollSnapAlign: 'start' }}
+      style={{
+        flex: '0 0 280px',
+        scrollSnapAlign: 'start',
+        opacity: selected ? 1 : 0.5,
+        transition: 'opacity 140ms ease'
+      }}
     >
     <GlassPanel
       variant="panel"
@@ -384,9 +572,9 @@ function MiniCard({ listing, selected, onSelect, registerRef }: MiniCardProps) {
         borderRadius: 18,
         padding: 10,
         cursor: 'pointer',
-        outline: selected ? '2px solid var(--atlas-ink)' : 'none',
-        outlineOffset: -2,
-        transition: 'outline 140ms ease',
+        background: 'var(--atlas-glass-pill-bg)',
+        outline: 'none',
+        transition: 'background 140ms ease',
         boxShadow:
           '0 4px 10px -6px rgba(22, 20, 15, 0.18), 0 0 0 1px rgba(22, 20, 15, 0.04)'
       }}

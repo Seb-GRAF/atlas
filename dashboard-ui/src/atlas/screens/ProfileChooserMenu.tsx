@@ -1,18 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties, ReactNode } from 'react';
 import { useState } from 'react';
-import { createProfile, deleteProfile, getProfileDetail, listProfiles, updateProfile } from '../../api/profiles';
-import type { ProfilePayload } from '../../api/schemas';
+import { deleteProfile, listProfiles } from '../../api/profiles';
 import { Hairline, Icons } from '../components';
-import { buildProfileDashboardUrl } from '../profileRouting';
-import { ProfileEditorModal } from './ProfileEditorModal';
 import { ProfileChooserRow } from './ProfileChooserRow';
-import { createEmptyProfileDraft, profileDetailToDraft } from './profileEditorModel';
 
 type ProfileChooserMenuProps = {
   activeSlug: string;
   onSelect: (slug: string) => void;
   onClose: () => void;
+  onEditProfile: (slug: string) => void;
+  onCreateProfile: () => void;
 };
 
 const menuLinkStyle: CSSProperties = {
@@ -31,9 +29,8 @@ const menuLinkStyle: CSSProperties = {
   cursor: 'pointer'
 };
 
-export function ProfileChooserMenu({ activeSlug, onSelect, onClose }: ProfileChooserMenuProps) {
+export function ProfileChooserMenu({ activeSlug, onSelect, onEditProfile, onCreateProfile }: ProfileChooserMenuProps) {
   const qc = useQueryClient();
-  const [editor, setEditor] = useState<{ mode: 'create' | 'edit'; draft: ProfilePayload } | null>(null);
   const [confirmDeleteSlug, setConfirmDeleteSlug] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const profilesQuery = useQuery({
@@ -42,37 +39,16 @@ export function ProfileChooserMenu({ activeSlug, onSelect, onClose }: ProfileCho
   });
   const profiles = profilesQuery.data ?? [];
   const error = profilesQuery.error instanceof Error ? profilesQuery.error.message : null;
-  const invalidateProfiles = () => qc.invalidateQueries({ queryKey: ['atlas', 'profiles'] });
-
-  const saveProfile = useMutation({
-    mutationFn: (payload: ProfilePayload) => (editor?.mode === 'edit' ? updateProfile(payload) : createProfile(payload)),
-    onSuccess: (_result, payload) => {
-      setEditor(null);
-      invalidateProfiles();
-      window.location.href = buildProfileDashboardUrl(payload.slug);
-    },
-    onError: (err) => setActionError(err instanceof Error ? err.message : 'Impossible de sauvegarder le profil')
-  });
 
   const removeProfile = useMutation({
     mutationFn: deleteProfile,
     onSuccess: (_result, slug) => {
       setConfirmDeleteSlug(null);
-      invalidateProfiles();
+      qc.invalidateQueries({ queryKey: ['atlas', 'profiles'] });
       if (slug === activeSlug) window.location.href = '/';
     },
     onError: (err) => setActionError(err instanceof Error ? err.message : 'Impossible de supprimer le profil')
   });
-
-  const editProfile = async (slug: string) => {
-    setActionError(null);
-    try {
-      const detail = await getProfileDetail(slug);
-      setEditor({ mode: 'edit', draft: profileDetailToDraft(detail) });
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Impossible de charger le profil');
-    }
-  };
 
   return (
     <div
@@ -105,11 +81,11 @@ export function ProfileChooserMenu({ activeSlug, onSelect, onClose }: ProfileCho
               profile={profile}
               active={profile.slug === activeSlug}
               confirmingDelete={confirmDeleteSlug === profile.slug}
-              onSelect={() => {
-                if (profile.slug === activeSlug) onClose();
-                else onSelect(profile.slug);
+              onSelect={() => onSelect(profile.slug)}
+              onEdit={() => {
+                setActionError(null);
+                onEditProfile(profile.slug);
               }}
-              onEdit={() => editProfile(profile.slug)}
               onDeleteIntent={() => setConfirmDeleteSlug(profile.slug)}
               onCancelDelete={() => setConfirmDeleteSlug(null)}
               onConfirmDelete={() => removeProfile.mutate(profile.slug)}
@@ -124,26 +100,13 @@ export function ProfileChooserMenu({ activeSlug, onSelect, onClose }: ProfileCho
         type="button"
         onClick={() => {
           setActionError(null);
-          setEditor({ mode: 'create', draft: createEmptyProfileDraft() });
+          onCreateProfile();
         }}
         style={menuLinkStyle}
       >
         <Icons.Plus size={14} stroke={1.7} />
         Nouveau profil
       </button>
-      {editor ? (
-        <ProfileEditorModal
-          mode={editor.mode}
-          draft={editor.draft}
-          saving={saveProfile.isPending}
-          error={actionError}
-          onClose={() => setEditor(null)}
-          onSave={(payload) => {
-            setActionError(null);
-            saveProfile.mutate(payload);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

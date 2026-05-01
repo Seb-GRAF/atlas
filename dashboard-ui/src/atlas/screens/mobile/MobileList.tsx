@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { GlassPill, Icons } from '../../components';
 import { MobileListRow } from './MobileListRow';
 import { SortMenu } from '../SortMenu';
+import { SourcesFilter } from '../SourcesFilter';
+import { ConfirmDialog } from '../ConfirmDialog';
 import type {
   AtlasListing,
   AtlasProfile,
@@ -18,13 +20,17 @@ type MobileListProps = {
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
+  onArchiveAll?: () => void;
   pendingIds?: ReadonlySet<string>;
   onScan: () => void;
   scanning: boolean;
-  onOpenFilters: () => void;
+  onOpenProfileSwitcher: () => void;
   sort: AtlasSortValue;
   onSortChange: (sort: AtlasSortValue) => void;
   scanStatus?: ReactNode;
+  sourceListings?: AtlasListing[];
+  sources?: string[];
+  onSourcesChange?: (next: string[]) => void;
 };
 
 const rootStyle: CSSProperties = {
@@ -101,17 +107,23 @@ export function MobileList({
   onStageChange,
   onSelect,
   onArchive,
+  onArchiveAll,
   pendingIds,
   onScan,
   scanning,
-  onOpenFilters,
+  onOpenProfileSwitcher,
   sort,
   onSortChange,
-  scanStatus
+  scanStatus,
+  sourceListings,
+  sources,
+  onSourcesChange
 }: MobileListProps) {
   const count = pendingIds && pendingIds.size > 0
     ? listings.reduce((acc, l) => acc + (pendingIds.has(l.id) ? 0 : 1), 0)
     : listings.length;
+  const [confirmArchiveAll, setConfirmArchiveAll] = useState(false);
+  const showArchiveAll = !!onArchiveAll && count > 0;
   const zoneLabel = formatZonesShort(profile.zones, profile.shortTitle);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const headerLeadRef = useRef<HTMLDivElement | null>(null);
@@ -163,12 +175,28 @@ export function MobileList({
     <div style={topBarStyle}>
       <GlassPill
         as="button"
-        padding="10px 14px"
-        onClick={onOpenFilters}
-        aria-label="Modifier les zones et filtres"
-        style={{ flex: 1, gap: 10, justifyContent: 'flex-start' }}
+        padding="6px 10px 6px 6px"
+        onClick={onOpenProfileSwitcher}
+        aria-label="Choisir un profil"
+        style={{ flex: 1, gap: 8, justifyContent: 'flex-start', minWidth: 0 }}
       >
-        <Icons.Filter size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
+        <span
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 7,
+            background: 'var(--atlas-ink)',
+            color: '#fff',
+            display: 'grid',
+            placeItems: 'center',
+            fontFamily: 'var(--atlas-mono)',
+            fontSize: 11,
+            fontWeight: 600,
+            flex: '0 0 auto'
+          }}
+        >
+          A
+        </span>
         <span
           style={{
             flex: 1,
@@ -182,43 +210,28 @@ export function MobileList({
             whiteSpace: 'nowrap'
           }}
         >
-          {zoneLabel}
+          {profile.shortTitle || zoneLabel}
         </span>
-        <span
-          style={{
-            width: 1,
-            height: 14,
-            background: 'var(--atlas-line)'
-          }}
-        />
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            color: 'var(--atlas-ink-2)'
-          }}
-        >
-          <Icons.Chevron size={14} stroke={1.7} />
-          {profile.newCount > 0 ? (
-            <span
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 999,
-                background: 'var(--atlas-ember)'
-              }}
-            />
-          ) : null}
-        </span>
+        <Icons.ChevronDown size={12} stroke={1.6} style={{ color: 'var(--atlas-ink-3)', flex: '0 0 auto' }} />
+        {profile.newCount > 0 ? (
+          <span
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: 999,
+              background: 'var(--atlas-ember)',
+              flex: '0 0 auto'
+            }}
+          />
+        ) : null}
       </GlassPill>
 
       <GlassPill
         as="button"
-        padding="10px 14px"
+        padding="10px 12px"
         onClick={onScan}
         aria-label={scanning ? 'Scan en cours, voir le détail' : 'Lancer un scan'}
-        style={{ gap: 8 }}
+        style={{ gap: 8, flex: '0 0 auto' }}
       >
         <span
           style={{
@@ -265,7 +278,24 @@ export function MobileList({
       >
         {count} appartement{count > 1 ? 's' : ''}
       </div>
-      <SortMenu sort={sort} onChange={onSortChange} buttonStyle={sortBtnStyle} align="right" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {showArchiveAll ? (
+          <button
+            type="button"
+            onClick={() => setConfirmArchiveAll(true)}
+            aria-label={`Archiver les ${count} annonces`}
+            style={{
+              ...sortBtnStyle,
+              gap: 4,
+              color: 'var(--atlas-ink-3)'
+            }}
+          >
+            <Icons.Close size={12} stroke={1.8} />
+            Tout archiver
+          </button>
+        ) : null}
+        <SortMenu sort={sort} onChange={onSortChange} buttonStyle={sortBtnStyle} align="right" />
+      </div>
     </div>
   );
 
@@ -320,6 +350,17 @@ export function MobileList({
             {renderSummary()}
           </div>
           {renderStageBar()}
+          {sourceListings && sources && onSourcesChange ? (
+            <div style={{ paddingBottom: 10 }}>
+              <SourcesFilter
+                listings={sourceListings}
+                selected={sources}
+                onChange={onSourcesChange}
+                compact
+                padInline={12}
+              />
+            </div>
+          ) : null}
         </div>
 
         {scanStatus ?? null}
@@ -353,6 +394,20 @@ export function MobileList({
           )}
         </div>
       </div>
+
+      {confirmArchiveAll ? (
+        <ConfirmDialog
+          title={`Archiver ${count} annonce${count > 1 ? 's' : ''} ?`}
+          message="Toutes les annonces visibles seront archivées. Vous pourrez annuler pendant quelques secondes."
+          confirmLabel="Tout archiver"
+          destructive
+          onCancel={() => setConfirmArchiveAll(false)}
+          onConfirm={() => {
+            setConfirmArchiveAll(false);
+            onArchiveAll?.();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -11,7 +11,7 @@ import { MobileDetailSheet } from './MobileDetailSheet';
 import { MobileScanSheet } from './MobileScanSheet';
 import { CommuteProgressBanner } from '../CommuteProgressBanner';
 import { MobileTabBar, type MobileTab } from './MobileTabBar';
-import { FiltersSheet } from './FiltersSheet';
+import { ProfileSwitcherSheet } from './ProfileSwitcherSheet';
 import { UndoToast } from '../UndoToast';
 import { usePendingDismissals } from '../usePendingDismissals';
 import { getActiveProfileSlug } from '../../profileRouting';
@@ -30,14 +30,14 @@ const rootStyle: CSSProperties = {
 export function MobileShell() {
   const activeProfileSlug = getActiveProfileSlug();
   const { listings, profile, isLoading, error } = useAtlasState(activeProfileSlug);
-  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations(profile.slug, activeProfileSlug);
+  const { setStatus, togglePin, dismiss } = useAtlasMutations(profile.slug, activeProfileSlug);
   const [urlState, updateUrl] = useAtlasUrlState();
   const { scan, jobId, start: startScan, cancel: cancelScan } = useScan(activeProfileSlug);
 
   const [mode, setMode] = useState<Mode>(urlState.listing ? 'detail' : 'list');
   // Tracks the screen behind the sheet so the user returns to it on close.
   const [priorMode, setPriorMode] = useState<'list' | 'map'>('list');
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [profileSwitcherOpen, setProfileSwitcherOpen] = useState(false);
   // Sheet visibility is decoupled from URL selection: a user may keep a
   // listing selected (so the route overlay stays drawn on the map) while
   // closing the bottom sheet to actually see the map.
@@ -109,22 +109,34 @@ export function MobileShell() {
 
   const stages = useMemo(() => listStages(visibleListings), [visibleListings]);
 
-  const filtered = useMemo(
-    () => sortListings(visibleListings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
-    [visibleListings, urlState.stage, urlState.sort]
+  const stageScoped = useMemo(
+    () => visibleListings.filter((l) => matchesStage(l, urlState.stage)),
+    [visibleListings, urlState.stage]
   );
+
+  const filtered = useMemo(() => {
+    const sourceSet = urlState.sources.length > 0 ? new Set(urlState.sources) : null;
+    const scoped = sourceSet
+      ? stageScoped.filter((l) => sourceSet.has(String(l.source)))
+      : stageScoped;
+    return sortListings(scoped, urlState.sort);
+  }, [stageScoped, urlState.sort, urlState.sources]);
 
   // Keep pending items in the rendered list so they animate to height 0
   // instead of jumping. They are still excluded from `filtered` (and from
   // selection / map pins / stage counts).
   const filteredForList = useMemo(() => {
     if (pendingIds.size === 0) return filtered;
+    const sourceSet = urlState.sources.length > 0 ? new Set(urlState.sources) : null;
     const pendingMembers = listings.filter(
-      (l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)
+      (l) =>
+        pendingIds.has(l.id) &&
+        matchesStage(l, urlState.stage) &&
+        (!sourceSet || sourceSet.has(String(l.source)))
     );
     if (pendingMembers.length === 0) return filtered;
     return sortListings([...filtered, ...pendingMembers], urlState.sort);
-  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort]);
+  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort, urlState.sources]);
 
   const selected: AtlasListing | null = useMemo(
     () => listings.find((l) => l.id === urlState.listing) ?? null,
@@ -149,8 +161,10 @@ export function MobileShell() {
       return;
     }
     // Hide the sheet so the user can actually see the route on the map; the
-    // listing stays selected, the route stays drawn.
+    // listing stays selected, the route stays drawn. priorMode must flip to
+    // 'map' so the urlState/sheetOpen sync effect doesn't snap back to list.
     setSheetOpen(false);
+    setPriorMode('map');
     setMode('map');
     if (selected.transitRouteOverlay && selected.transitRouteOverlay.legs.length > 0) {
       setRouteOverlay(selected.transitRouteOverlay);
@@ -227,6 +241,14 @@ export function MobileShell() {
     [filtered, schedulePending, updateUrl, urlState.listing, handleFullClose]
   );
 
+  const handleArchiveAll = useCallback(() => {
+    if (filtered.length === 0) return;
+    if (urlState.listing && filtered.some((l) => l.id === urlState.listing)) {
+      handleFullClose();
+    }
+    for (const l of filtered) schedulePending(l.id);
+  }, [filtered, schedulePending, urlState.listing, handleFullClose]);
+
   const handleTabSelect = (tab: MobileTab) => {
     if (tab === 'list') {
       if (urlState.listing) updateUrl({ listing: null });
@@ -262,14 +284,18 @@ export function MobileShell() {
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
           onSelect={handleSelect}
-          onOpenFilters={() => setFiltersOpen(true)}
+          onOpenProfileSwitcher={() => setProfileSwitcherOpen(true)}
           routeOverlay={routeOverlay}
+          sourceListings={stageScoped}
+          sources={urlState.sources}
+          onSourcesChange={(sources) => updateUrl({ sources, listing: null })}
         />
       ) : (
         <MobileList
           profile={profile}
           listings={filteredForList}
           onArchive={handleArchive}
+          onArchiveAll={handleArchiveAll}
           pendingIds={pendingIds}
           stages={stages}
           stage={urlState.stage}
@@ -277,26 +303,20 @@ export function MobileShell() {
           onSelect={handleSelect}
           onScan={handleScanClick}
           scanning={scanRunning}
-          onOpenFilters={() => setFiltersOpen(true)}
+          onOpenProfileSwitcher={() => setProfileSwitcherOpen(true)}
           sort={urlState.sort}
           onSortChange={(sort) => updateUrl({ sort })}
           scanStatus={<CommuteProgressBanner scan={scan} />}
+          sourceListings={stageScoped}
+          sources={urlState.sources}
+          onSourcesChange={(sources) => updateUrl({ sources, listing: null })}
         />
       )}
 
-      <FiltersSheet
-        open={filtersOpen}
-        onOpenChange={setFiltersOpen}
-        profile={profile}
-        stages={stages}
-        stage={urlState.stage}
-        onStageChange={(s) => updateUrl({ stage: s, listing: null })}
-        saving={saveProfile.isPending}
-        onSave={(next) => {
-          saveProfile.mutate(next, {
-            onSuccess: () => setFiltersOpen(false)
-          });
-        }}
+      <ProfileSwitcherSheet
+        open={profileSwitcherOpen}
+        onClose={() => setProfileSwitcherOpen(false)}
+        activeSlug={activeProfileSlug}
       />
 
       <MobileDetailSheet
@@ -359,9 +379,6 @@ export function MobileShell() {
 
       {isLoading ? <LoadingIndicator /> : null}
       {error ? <ErrorBanner message={(error as Error).message} /> : null}
-      {saveProfile.error ? (
-        <ErrorBanner message={(saveProfile.error as Error).message} />
-      ) : null}
     </div>
   );
 }

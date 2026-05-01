@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
-import { Icons, Mono, formatCHF } from '../components';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent
+} from 'react';
+import { Icons, Mono, SourceMono, formatCHF } from '../components';
 import type { AtlasListing } from '../types';
 import { CommuteChips } from './CommuteChips';
 import { useSwipeToArchive } from './useSwipeToArchive';
@@ -10,6 +18,7 @@ type ListingRowProps = {
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
   pending?: boolean;
+  registerRef?: (el: HTMLDivElement | null) => void;
 };
 
 const eyebrowStyle: CSSProperties = {
@@ -54,7 +63,14 @@ const actionPillStyle: CSSProperties = {
 
 const SWIPE_THRESHOLD = 96;
 
-export function ListingRow({ listing, selected, onSelect, onArchive, pending = false }: ListingRowProps) {
+export function ListingRow({
+  listing,
+  selected,
+  onSelect,
+  onArchive,
+  pending = false,
+  registerRef
+}: ListingRowProps) {
   const cover = listing.images[0];
   const meta = [
     listing.rooms != null ? `${listing.rooms} pces` : null,
@@ -75,6 +91,13 @@ export function ListingRow({ listing, selected, onSelect, onArchive, pending = f
   const [collapsing, setCollapsing] = useState(false);
   const swipeReset = swipe.reset;
   const wasSwipedRef = useRef(false);
+  const setWrapperRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      wrapperRef.current = node;
+      registerRef?.(node);
+    },
+    [registerRef]
+  );
 
   useEffect(() => {
     const node = wrapperRef.current;
@@ -171,7 +194,7 @@ export function ListingRow({ listing, selected, onSelect, onArchive, pending = f
 
   return (
     <div
-      ref={wrapperRef}
+      ref={setWrapperRef}
       style={{ ...wrapperStyle, ...collapseStyle }}
       aria-hidden={pending || undefined}
     >
@@ -208,10 +231,12 @@ export function ListingRow({ listing, selected, onSelect, onArchive, pending = f
           textAlign: 'left',
           padding: 8,
           borderRadius: 14,
-          background: selected ? '#fff' : tx !== 0 ? 'var(--atlas-bg, #f6f3ee)' : 'transparent',
-          boxShadow: selected
-            ? '0 6px 18px -10px rgba(22,20,15,.25), 0 0 0 1px rgba(22,20,15,.06)'
-            : 'none',
+          background: selected
+            ? 'var(--atlas-ember-2)'
+            : tx !== 0
+              ? 'var(--atlas-bg, #f6f3ee)'
+              : 'transparent',
+          boxShadow: 'none',
           border: 0,
           cursor: 'pointer',
           touchAction: 'pan-y',
@@ -258,6 +283,20 @@ export function ListingRow({ listing, selected, onSelect, onArchive, pending = f
                 <Icons.Pin size={11} stroke={2} />
               </span>
             ) : null}
+            <span
+              title={String(listing.source)}
+              style={{
+                position: 'absolute',
+                bottom: 6,
+                right: 6,
+                background: 'rgba(255,255,255,.92)',
+                borderRadius: 6,
+                boxShadow: '0 1px 2px rgba(22,20,15,.18)',
+                lineHeight: 0
+              }}
+            >
+              <SourceMono source={String(listing.source)} size={20} />
+            </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>

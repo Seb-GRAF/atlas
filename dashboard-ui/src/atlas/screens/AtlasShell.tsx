@@ -4,7 +4,7 @@ import { useAtlasMutations, useAtlasState } from '../data/hooks';
 import { listStages, matchesStage, sortListings } from '../data/adapt';
 import { filterListingsByQuery } from '../data/listingSearch';
 import { useAtlasUrlState } from '../url';
-import { ALL_SOURCES, buildScanSources, useScan, useScanCardVisibility } from '../scan';
+import { ALL_SOURCES, buildScanSources, isAtlasSourceEnabled, useScan, useScanCardVisibility } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
 import { loadBasemap, saveBasemap, type Basemap } from '../mapPrefs';
 import { TopBar } from './TopBar';
@@ -13,7 +13,6 @@ import { DetailPanel, PANEL_ANIM_MS } from './DetailPanel';
 import { EmptyListPanel } from './EmptyListPanel';
 import { ScanProgressCard } from './ScanProgressCard';
 import { CommuteProgressBanner } from './CommuteProgressBanner';
-import { SettingsDrawer, SettingsScrim } from './SettingsDrawer';
 import { ListSkeleton } from './Skeletons';
 import { UndoToast } from './UndoToast';
 import { usePendingDismissals } from './usePendingDismissals';
@@ -49,10 +48,9 @@ export function AtlasShell() {
 function DesktopShell() {
   const activeProfileSlug = getActiveProfileSlug();
   const { listings, profile, isLoading, error } = useAtlasState(activeProfileSlug);
-  const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations(profile.slug, activeProfileSlug);
+  const { setStatus, togglePin, dismiss } = useAtlasMutations(profile.slug, activeProfileSlug);
   const [urlState, updateUrl] = useAtlasUrlState();
   const { scan, start: startScan, cancel: cancelScan } = useScan(activeProfileSlug);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const mapHandle = useRef<AtlasMapHandle>(null);
   const [routeOverlay, setRouteOverlay] = useState<RouteOverlay | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
@@ -76,23 +74,37 @@ function DesktopShell() {
 
   const stages = useMemo(() => listStages(visibleListings), [visibleListings]);
 
+  const stageScoped = useMemo(
+    () => visibleListings.filter((l) => matchesStage(l, urlState.stage)),
+    [visibleListings, urlState.stage]
+  );
+
   const filtered = useMemo(() => {
-    const stageListings = visibleListings.filter((l) => matchesStage(l, urlState.stage));
-    return sortListings(filterListingsByQuery(stageListings, query), urlState.sort);
-  }, [visibleListings, urlState.stage, urlState.sort, query]);
+    const sourceSet = urlState.sources.length > 0 ? new Set(urlState.sources) : null;
+    const sourceScoped = sourceSet
+      ? stageScoped.filter((l) => sourceSet.has(String(l.source)))
+      : stageScoped;
+    return sortListings(filterListingsByQuery(sourceScoped, query), urlState.sort);
+  }, [stageScoped, urlState.sort, urlState.sources, query]);
 
   // For list rendering: keep pending items in place so they can animate to
   // height 0 instead of jumping. They are excluded from `filtered` (and thus
   // from selection/stage counts/map pins).
   const filteredForList = useMemo(() => {
     if (pendingIds.size === 0) return filtered;
+    const sourceSet = urlState.sources.length > 0 ? new Set(urlState.sources) : null;
     const pendingMembers = filterListingsByQuery(
-      listings.filter((l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)),
+      listings.filter(
+        (l) =>
+          pendingIds.has(l.id) &&
+          matchesStage(l, urlState.stage) &&
+          (!sourceSet || sourceSet.has(String(l.source)))
+      ),
       query
     );
     if (pendingMembers.length === 0) return filtered;
     return sortListings([...filtered, ...pendingMembers], urlState.sort);
-  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort, query]);
+  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort, urlState.sources, query]);
 
   const handleArchive = useCallback(
     (id: string) => {
@@ -106,6 +118,14 @@ function DesktopShell() {
     },
     [filtered, schedulePending, updateUrl, urlState.listing]
   );
+
+  const handleArchiveAll = useCallback(() => {
+    if (filtered.length === 0) return;
+    if (urlState.listing && filtered.some((l) => l.id === urlState.listing)) {
+      updateUrl({ listing: null });
+    }
+    for (const l of filtered) schedulePending(l.id);
+  }, [filtered, schedulePending, updateUrl, urlState.listing]);
 
   const selected: AtlasListing | null = useMemo(
     () => listings.find((l) => l.id === urlState.listing) ?? null,
@@ -160,7 +180,7 @@ function DesktopShell() {
   }, [selected, routeOverlay]);
 
   // Keep the detail panel mounted long enough to play its exit animation.
-  const detailVisible = !!selected && !settingsOpen;
+  const detailVisible = !!selected;
   const [detailRender, setDetailRender] = useState<AtlasListing | null>(detailVisible ? selected : null);
   const [detailClosing, setDetailClosing] = useState(false);
   useEffect(() => {
@@ -202,7 +222,7 @@ function DesktopShell() {
   const showEmpty = !isLoading && listings.length === 0 && !scanRunning;
   const showStageEmpty =
     !isLoading && listings.length > 0 && filteredForList.length === 0 && !scanRunning;
-  const enabledSourceLabels = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
+  const enabledSourceLabels = ALL_SOURCES.filter((s) => isAtlasSourceEnabled(profile.enabledSources, s));
 
   const moveSelection = useCallback(
     (delta: 1 | -1) => {
@@ -227,8 +247,7 @@ function DesktopShell() {
     onNext: () => moveSelection(1),
     onPrev: () => moveSelection(-1),
     onEscape: () => {
-      if (settingsOpen) setSettingsOpen(false);
-      else if (urlState.listing) updateUrl({ listing: null });
+      if (urlState.listing) updateUrl({ listing: null });
     },
     onEnter: () => {
       if (selected?.url) window.open(selected.url, '_blank', 'noopener');
@@ -240,7 +259,6 @@ function DesktopShell() {
     onScan: () => {
       if (!scanRunning) startScan();
     },
-    onSettings: () => setSettingsOpen((s) => !s),
     onStatusKey: (digit) => {
       if (!selected) return;
       setStatus.mutate({ id: selected.id, status: STATUS_BY_DIGIT[digit], notes: selected.notes });
@@ -281,7 +299,6 @@ function DesktopShell() {
         stages={stages}
         stage={urlState.stage}
         onStageChange={(stage) => updateUrl({ stage, listing: null })}
-        onOpenSettings={() => setSettingsOpen(true)}
         onScan={() => startScan()}
         scanning={scanRunning}
         onProfileSelect={(slug) => {
@@ -295,6 +312,7 @@ function DesktopShell() {
         selectedId={urlState.listing}
         onSelect={(id) => updateUrl({ listing: id })}
         onArchive={handleArchive}
+        onArchiveAll={handleArchiveAll}
         pendingIds={pendingIds}
         generatedAt={profile.generatedAt}
         totalCount={isLoading ? undefined : filtered.length}
@@ -307,7 +325,6 @@ function DesktopShell() {
               zonesCount={profile.zones.length}
               sources={enabledSourceLabels}
               onScan={() => startScan()}
-              onOpenSettings={() => setSettingsOpen(true)}
             />
           ) : showStageEmpty ? (
             <StageEmpty stage={urlState.stage} query={query} />
@@ -315,6 +332,9 @@ function DesktopShell() {
         }
         sort={urlState.sort}
         onSortChange={(sort) => updateUrl({ sort })}
+        sourceListings={stageScoped}
+        sources={urlState.sources}
+        onSourcesChange={(sources) => updateUrl({ sources, listing: null })}
       />
 
       {scanCardPhase !== 'hidden' && scan ? (
@@ -383,23 +403,6 @@ function DesktopShell() {
         basemap={basemap}
         onBasemapChange={changeBasemap}
       />
-
-      {settingsOpen ? (
-        <>
-          <SettingsScrim onClick={() => setSettingsOpen(false)} />
-          <SettingsDrawer
-            profile={profile}
-            onClose={() => setSettingsOpen(false)}
-            saving={saveProfile.isPending}
-            error={saveProfile.error ? (saveProfile.error as Error).message : null}
-            onSave={(next) => {
-              saveProfile.mutate(next, {
-                onSuccess: () => setSettingsOpen(false)
-              });
-            }}
-          />
-        </>
-      ) : null}
 
       {pendingCount > 0 ? (
         <UndoToast count={pendingCount} onUndo={undoPending} bottomOffset={24} />

@@ -54,7 +54,8 @@ export function buildProfilePayload(next: AtlasProfile, detail: ProfileDetail): 
     bernardNicod: next.enabledSources['bernard-nicod'] !== false,
     retraitesListings: next.enabledSources['Retraites Populaires'] !== false,
     retraitesProjets: detail.sources?.retraitesProjets ?? true,
-    anibis: next.enabledSources['anibis.ch'] !== false
+    anibis: next.enabledSources['anibis.ch'] !== false,
+    facebookMarketplace: next.enabledSources['Facebook Marketplace'] === true
   };
 
   return {

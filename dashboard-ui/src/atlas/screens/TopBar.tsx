@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { GlassPill, AtlasButton, Icons } from '../components';
 import type { AtlasStage, AtlasStageValue } from '../types';
 import { ProfileChooserMenu } from './ProfileChooserMenu';
+import { ProfileEditorModal } from './ProfileEditorModal';
+import { createEmptyProfileDraft, profileDetailToDraft } from './profileEditorModel';
+import type { ProfilePayload } from '../../api/schemas';
+import { createProfile, getProfileDetail, updateProfile } from '../../api/profiles';
+import { buildProfileDashboardUrl } from '../profileRouting';
 
 type TopBarProps = {
   profileSlug: string;
@@ -12,11 +18,12 @@ type TopBarProps = {
   stages: AtlasStage[];
   stage: AtlasStageValue;
   onStageChange: (stage: AtlasStageValue) => void;
-  onOpenSettings: () => void;
   onScan: () => void;
   scanning: boolean;
   onProfileSelect: (slug: string) => void;
 };
+
+type EditorState = { mode: 'create' | 'edit'; draft: ProfilePayload };
 
 const TOPBAR_STAGE_LABELS: Record<AtlasStageValue, string> = {
   triage: 'À trier',
@@ -25,6 +32,8 @@ const TOPBAR_STAGE_LABELS: Record<AtlasStageValue, string> = {
   files: 'Dossiers',
   done: 'Clos'
 };
+
+const TOPBAR_STAGE_ORDER: AtlasStageValue[] = ['triage', 'active', 'visits'];
 
 const containerStyle: CSSProperties = {
   position: 'absolute',
@@ -45,13 +54,15 @@ export function TopBar({
   stages,
   stage,
   onStageChange,
-  onOpenSettings,
   onScan,
   scanning,
   onProfileSelect
 }: TopBarProps) {
+  const qc = useQueryClient();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editorError, setEditorError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!profileMenuOpen) return;
@@ -71,6 +82,36 @@ export function TopBar({
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [profileMenuOpen]);
+
+  const saveProfileMutation = useMutation({
+    mutationFn: (payload: ProfilePayload) =>
+      editor?.mode === 'edit' ? updateProfile(payload) : createProfile(payload),
+    onSuccess: (_result, payload) => {
+      setEditor(null);
+      setEditorError(null);
+      qc.invalidateQueries({ queryKey: ['atlas', 'profiles'] });
+      window.location.href = buildProfileDashboardUrl(payload.slug);
+    },
+    onError: (err) =>
+      setEditorError(err instanceof Error ? err.message : 'Impossible de sauvegarder le profil')
+  });
+
+  const handleEditProfile = async (slug: string) => {
+    setProfileMenuOpen(false);
+    setEditorError(null);
+    try {
+      const detail = await getProfileDetail(slug);
+      setEditor({ mode: 'edit', draft: profileDetailToDraft(detail) });
+    } catch (err) {
+      setEditorError(err instanceof Error ? err.message : 'Impossible de charger le profil');
+    }
+  };
+
+  const handleCreateProfile = () => {
+    setProfileMenuOpen(false);
+    setEditorError(null);
+    setEditor({ mode: 'create', draft: createEmptyProfileDraft() });
+  };
 
   return (
     <div style={containerStyle}>
@@ -109,9 +150,11 @@ export function TopBar({
             activeSlug={profileSlug}
             onSelect={(slug) => {
               setProfileMenuOpen(false);
-              onProfileSelect(slug);
+              if (slug !== profileSlug) onProfileSelect(slug);
             }}
             onClose={() => setProfileMenuOpen(false)}
+            onEditProfile={handleEditProfile}
+            onCreateProfile={handleCreateProfile}
           />
         ) : null}
       </div>
@@ -174,7 +217,7 @@ export function TopBar({
       <span style={{ flex: 1 }} />
 
       <GlassPill padding="4px" style={{ gap: 0 }}>
-        {(['triage', 'active', 'visits', 'done'] as AtlasStageValue[])
+        {TOPBAR_STAGE_ORDER
           .map((value) => {
             const found = stages.find((s) => s.value === value);
             return found ? { ...found, label: TOPBAR_STAGE_LABELS[value] } : null;
@@ -218,10 +261,6 @@ export function TopBar({
           })}
       </GlassPill>
 
-      <GlassPill as="button" padding="8px 10px" onClick={onOpenSettings} aria-label="Réglages">
-        <Icons.Settings size={15} stroke={1.6} />
-      </GlassPill>
-
       <AtlasButton
         variant="primary"
         onClick={onScan}
@@ -241,6 +280,23 @@ export function TopBar({
       >
         {scanning ? 'Scan en cours…' : 'Scanner'}
       </AtlasButton>
+
+      {editor ? (
+        <ProfileEditorModal
+          mode={editor.mode}
+          draft={editor.draft}
+          saving={saveProfileMutation.isPending}
+          error={editorError}
+          onClose={() => {
+            setEditor(null);
+            setEditorError(null);
+          }}
+          onSave={(payload) => {
+            setEditorError(null);
+            saveProfileMutation.mutate(payload);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

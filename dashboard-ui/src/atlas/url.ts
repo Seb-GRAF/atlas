@@ -8,6 +8,7 @@ export type AtlasUrlState = {
   listing: string | null;
   zone: string | null;
   sort: AtlasSortValue;
+  sources: string[];
 };
 
 const STAGE_VALUES: AtlasStageValue[] = ['triage', 'active', 'visits', 'files', 'done'];
@@ -15,7 +16,7 @@ const SORT_VALUES: AtlasSortValue[] = ['recent', 'priceAsc', 'priceDesc'];
 
 function readFromLocation(): AtlasUrlState {
   if (typeof window === 'undefined')
-    return { stage: 'triage', listing: null, zone: null, sort: 'recent' };
+    return { stage: 'triage', listing: null, zone: null, sort: 'recent', sources: [] };
   const params = new URLSearchParams(window.location.search);
   const stageRaw = params.get('stage');
   const stage = (STAGE_VALUES.includes(stageRaw as AtlasStageValue)
@@ -25,11 +26,16 @@ function readFromLocation(): AtlasUrlState {
   const sort = (SORT_VALUES.includes(sortRaw as AtlasSortValue)
     ? (sortRaw as AtlasSortValue)
     : 'recent') satisfies AtlasSortValue;
+  const sourcesRaw = params.get('sources');
+  const sources = sourcesRaw
+    ? sourcesRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
   return {
     stage,
     listing: params.get('listing'),
     zone: params.get('zone'),
-    sort
+    sort,
+    sources
   };
 }
 
@@ -53,6 +59,8 @@ export function useAtlasUrlState() {
     else params.delete('zone');
     if (next.sort && next.sort !== 'recent') params.set('sort', next.sort);
     else params.delete('sort');
+    if (next.sources && next.sources.length > 0) params.set('sources', next.sources.join(','));
+    else params.delete('sources');
     const search = params.toString();
     const url = `${window.location.pathname}${search ? `?${search}` : ''}`;
     window.history.replaceState({}, '', url);

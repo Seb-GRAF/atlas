@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
-import { Icons, Mono, PhotoFrame, formatCHF } from '../../components';
+import { Icons, Mono, PhotoFrame, SourceMono, formatCHF } from '../../components';
 import type { AtlasListing } from '../../types';
 import { CommuteChips } from '../CommuteChips';
 import { useSwipeToArchive } from '../useSwipeToArchive';
@@ -13,7 +13,6 @@ type MobileListRowProps = {
 
 const wrapperStyle: CSSProperties = {
   position: 'relative',
-  borderBottom: '1px solid var(--atlas-line-2)',
   flexShrink: 0,
   overflow: 'hidden'
 };
@@ -111,7 +110,6 @@ const metaItem: CSSProperties = {
 const SWIPE_THRESHOLD = 96;
 
 export function MobileListRow({ listing, onSelect, onArchive, pending = false }: MobileListRowProps) {
-  const sourceShort = String(listing.source).replace(/\.ch$/i, '');
   const swipeEnabled = !!onArchive;
 
   const swipe = useSwipeToArchive({
@@ -263,6 +261,22 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
             <Icons.Heart size={14} stroke={1.7} />
           </span>
           {listing.isNew ? <span style={newBadgeStyle}>NOUVEAU</span> : null}
+          <span
+            title={String(listing.source)}
+            style={{
+              position: 'absolute',
+              bottom: 10,
+              left: 10,
+              background: 'rgba(255,255,255,.92)',
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)',
+              borderRadius: 7,
+              boxShadow: '0 2px 6px rgba(22,20,15,.22)',
+              lineHeight: 0
+            }}
+          >
+            <SourceMono source={String(listing.source)} size={24} />
+          </span>
         </div>
 
         <div
@@ -274,9 +288,7 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
           }}
         >
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={eyebrowStyle}>
-              {[listing.area, sourceShort].filter(Boolean).join(' · ') || '—'}
-            </div>
+            <div style={eyebrowStyle}>{listing.area || '—'}</div>
             <div style={titleStyle}>{listing.title}</div>
           </div>
           {listing.totalChf != null ? (

@@ -7,7 +7,8 @@ export const PROFILE_SOURCE_OPTIONS = [
   { key: 'bernardNicod', label: 'bernard-nicod.ch' },
   { key: 'retraitesListings', label: 'Retraites Populaires' },
   { key: 'retraitesProjets', label: 'Retraites Projets' },
-  { key: 'anibis', label: 'anibis.ch' }
+  { key: 'anibis', label: 'anibis.ch' },
+  { key: 'facebookMarketplace', label: 'Facebook Marketplace' }
 ] as const;
 
 export type ProfileSourceKey = (typeof PROFILE_SOURCE_OPTIONS)[number]['key'];
@@ -33,7 +34,8 @@ export function createEmptyProfileDraft(): ProfilePayload {
       bernardNicod: true,
       retraitesListings: true,
       retraitesProjets: true,
-      anibis: false
+      anibis: false,
+      facebookMarketplace: false
     },
     filters: {
       minTotalChf: 0,
@@ -63,7 +65,8 @@ export function profileDetailToDraft(profile: ProfileDetail): ProfilePayload {
       bernardNicod: profile.sources.bernardNicod !== false,
       retraitesListings: profile.sources.retraitesListings !== false,
       retraitesProjets: profile.sources.retraitesProjets !== false,
-      anibis: !!profile.sources.anibis
+      anibis: !!profile.sources.anibis,
+      facebookMarketplace: !!profile.sources.facebookMarketplace
     },
     filters: {
       minTotalChf: profile.filters.minTotalChf ?? 0,

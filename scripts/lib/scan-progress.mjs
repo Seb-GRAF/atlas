@@ -105,6 +105,31 @@ function publicSource(source) {
   };
 }
 
+function cleanFailureMessage(value = '') {
+  const raw = value instanceof Error ? value.message : String(value || '');
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const useful = lines.find((line) => !/^WARN\b/.test(line) && !/^at\b/.test(line)) || lines[0] || '';
+  return useful.replace(/^Error:\s*/i, '').trim();
+}
+
+export function formatScanFailureMessage(sources = [], fallback = '') {
+  const sourceFailures = (Array.isArray(sources) ? sources : [])
+    .filter((source) => source?.status === 'error' && String(source?.error || '').trim())
+    .map((source) => {
+      const label = String(source.label || source.key || 'Source').trim();
+      return `${label}: ${String(source.error).trim()}`;
+    });
+
+  if (sourceFailures.length) return `Scan interrompu: ${sourceFailures.join('; ')}`;
+
+  const message = cleanFailureMessage(fallback);
+  if (!message) return 'Scan interrompu';
+  return message.startsWith('Scan interrompu') ? message : `Scan interrompu: ${message}`;
+}
+
 export function createInitialScanProgress({ sources = [], totalUnits = 0, now = isoNow() } = {}) {
   return {
     phase: 'pending',

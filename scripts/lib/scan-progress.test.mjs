@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyScanProgressEvent,
   createInitialScanProgress,
+  formatScanFailureMessage,
   normalizeScanSourceKey,
   publicScanProgress
 } from './scan-progress.mjs';
@@ -277,4 +278,25 @@ test('normalizes existing source labels', () => {
   assert.equal(normalizeScanSourceKey('bernard-nicod.ch'), 'bernard-nicod');
   assert.equal(normalizeScanSourceKey('Retraites Populaires'), 'retraites-populaires');
   assert.equal(normalizeScanSourceKey('immobilier.ch · Vevey · page 1'), 'immobilier');
+  assert.equal(normalizeScanSourceKey('Facebook Marketplace'), 'facebook-marketplace');
+});
+
+test('formatScanFailureMessage prefers structured source errors over stderr stacks', () => {
+  const message = formatScanFailureMessage(
+    [
+      {
+        label: 'Facebook Marketplace',
+        status: 'error',
+        error: 'FB_MARKETPLACE_LOGIN_REQUIRED: Run the login helper'
+      }
+    ],
+    'WARN Facebook Marketplace: noisy stderr\nError: Scan interrompu\n    at file.js:1:1'
+  );
+
+  assert.equal(
+    message,
+    'Scan interrompu: Facebook Marketplace: FB_MARKETPLACE_LOGIN_REQUIRED: Run the login helper'
+  );
+  assert.doesNotMatch(message, /file\.js/);
+  assert.doesNotMatch(message, /^WARN/);
 });

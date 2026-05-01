@@ -165,10 +165,10 @@ export function MobileList({
         as="button"
         padding="10px 14px"
         onClick={onOpenFilters}
-        aria-label="Filtres"
+        aria-label="Modifier les zones et filtres"
         style={{ flex: 1, gap: 10, justifyContent: 'flex-start' }}
       >
-        <Icons.Search size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
+        <Icons.Filter size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
         <span
           style={{
             flex: 1,
@@ -199,7 +199,7 @@ export function MobileList({
             color: 'var(--atlas-ink-2)'
           }}
         >
-          <Icons.Filter size={14} stroke={1.7} />
+          <Icons.Chevron size={14} stroke={1.7} />
           {profile.newCount > 0 ? (
             <span
               style={{

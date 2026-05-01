@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AtlasMap, type AtlasMapHandle, type AtlasMapPin, MapControls } from '../components';
 import { useAtlasMutations, useAtlasState } from '../data/hooks';
 import { listStages, matchesStage, sortListings } from '../data/adapt';
+import { filterListingsByQuery } from '../data/listingSearch';
 import { useAtlasUrlState } from '../url';
 import { ALL_SOURCES, buildScanSources, useScan, useScanCardVisibility } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
@@ -57,6 +58,7 @@ function DesktopShell() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [basemap, setBasemap] = useState<Basemap>(() => loadBasemap());
+  const [query, setQuery] = useState('');
 
   const changeBasemap = useCallback((next: Basemap) => {
     setBasemap(next);
@@ -74,22 +76,23 @@ function DesktopShell() {
 
   const stages = useMemo(() => listStages(visibleListings), [visibleListings]);
 
-  const filtered = useMemo(
-    () => sortListings(visibleListings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
-    [visibleListings, urlState.stage, urlState.sort]
-  );
+  const filtered = useMemo(() => {
+    const stageListings = visibleListings.filter((l) => matchesStage(l, urlState.stage));
+    return sortListings(filterListingsByQuery(stageListings, query), urlState.sort);
+  }, [visibleListings, urlState.stage, urlState.sort, query]);
 
   // For list rendering: keep pending items in place so they can animate to
   // height 0 instead of jumping. They are excluded from `filtered` (and thus
   // from selection/stage counts/map pins).
   const filteredForList = useMemo(() => {
     if (pendingIds.size === 0) return filtered;
-    const pendingMembers = listings.filter(
-      (l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)
+    const pendingMembers = filterListingsByQuery(
+      listings.filter((l) => pendingIds.has(l.id) && matchesStage(l, urlState.stage)),
+      query
     );
     if (pendingMembers.length === 0) return filtered;
     return sortListings([...filtered, ...pendingMembers], urlState.sort);
-  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort]);
+  }, [filtered, listings, pendingIds, urlState.stage, urlState.sort, query]);
 
   const handleArchive = useCallback(
     (id: string) => {
@@ -108,6 +111,12 @@ function DesktopShell() {
     () => listings.find((l) => l.id === urlState.listing) ?? null,
     [listings, urlState.listing]
   );
+
+  useEffect(() => {
+    if (!urlState.listing) return;
+    if (filtered.some((l) => l.id === urlState.listing)) return;
+    updateUrl({ listing: null });
+  }, [filtered, updateUrl, urlState.listing]);
 
   // Clear the route overlay when the user switches to a different listing or
   // deselects. The overlay is bound to a specific listing id.
@@ -225,7 +234,7 @@ function DesktopShell() {
       if (selected?.url) window.open(selected.url, '_blank', 'noopener');
     },
     onSlash: () => {
-      const input = document.querySelector<HTMLInputElement>('input[placeholder="Vevey, Lutry, Pully…"]');
+      const input = document.querySelector<HTMLInputElement>('input[aria-label="Rechercher une annonce"]');
       input?.focus();
     },
     onScan: () => {
@@ -267,10 +276,8 @@ function DesktopShell() {
         profileSlug={activeProfileSlug ?? profile.slug}
         profileTitle={profile.shortTitle}
         zones={profile.zones}
-        query=""
-        onQueryChange={() => {
-          /* search wired in a later phase */
-        }}
+        query={query}
+        onQueryChange={setQuery}
         stages={stages}
         stage={urlState.stage}
         onStageChange={(stage) => updateUrl({ stage, listing: null })}
@@ -303,7 +310,7 @@ function DesktopShell() {
               onOpenSettings={() => setSettingsOpen(true)}
             />
           ) : showStageEmpty ? (
-            <StageEmpty stage={urlState.stage} />
+            <StageEmpty stage={urlState.stage} query={query} />
           ) : null
         }
         sort={urlState.sort}
@@ -446,7 +453,8 @@ const STAGE_EMPTY_COPY: Record<string, string> = {
   done: 'Rien dans les archives'
 };
 
-function StageEmpty({ stage }: { stage: string }) {
+function StageEmpty({ stage, query }: { stage: string; query?: string }) {
+  const trimmedQuery = query?.trim();
   return (
     <div
       style={{
@@ -458,7 +466,7 @@ function StageEmpty({ stage }: { stage: string }) {
         margin: '32px auto'
       }}
     >
-      {STAGE_EMPTY_COPY[stage] ?? 'Aucune annonce'}
+      {trimmedQuery ? `Aucune annonce pour "${trimmedQuery}"` : STAGE_EMPTY_COPY[stage] ?? 'Aucune annonce'}
     </div>
   );
 }

@@ -124,7 +124,8 @@ export function TopBar({
         <input
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Vevey, Lutry, Pully…"
+          aria-label="Rechercher une annonce"
+          placeholder="Adresse, ville, note…"
           style={{
             flex: 1,
             background: 'transparent',
@@ -135,6 +136,26 @@ export function TopBar({
             fontSize: 13
           }}
         />
+        {query ? (
+          <button
+            type="button"
+            onClick={() => onQueryChange('')}
+            aria-label="Effacer la recherche"
+            style={{
+              width: 22,
+              height: 22,
+              border: 0,
+              borderRadius: 999,
+              background: 'transparent',
+              color: 'var(--atlas-ink-3)',
+              display: 'grid',
+              placeItems: 'center',
+              cursor: 'pointer'
+            }}
+          >
+            <Icons.X size={13} stroke={1.8} />
+          </button>
+        ) : null}
         <span
           style={{
             fontFamily: 'var(--atlas-mono)',

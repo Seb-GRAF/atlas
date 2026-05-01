@@ -66,6 +66,12 @@ const chipsRowStyle: CSSProperties = {
   pointerEvents: 'auto'
 };
 
+function formatZonesShort(zones: string[], shortTitle: string) {
+  if (zones.length === 0) return shortTitle || 'Filtres';
+  if (zones.length === 1) return zones[0];
+  return `${zones[0]} +${zones.length - 1}`;
+}
+
 export function MobileMap({
   profile,
   listings,
@@ -203,6 +209,7 @@ export function MobileMap({
 
   const selected =
     listings.find((l) => l.id === (selectedId ?? focusedId)) ?? visible[0] ?? null;
+  const zoneLabel = formatZonesShort(profile.zones, profile.shortTitle);
 
   return (
     <div style={rootStyle}>
@@ -222,10 +229,28 @@ export function MobileMap({
       </div>
 
       <div style={topBarStyle}>
-        <GlassPill padding="8px 12px" style={{ flex: 1, gap: 8 }}>
-          <Icons.Search size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
-          <span style={{ flex: 1, color: 'var(--atlas-ink-3)', fontSize: 13 }}>
-            Vevey, Lutry…
+        <GlassPill
+          as="button"
+          padding="8px 12px"
+          onClick={onOpenFilters}
+          aria-label="Modifier les zones et filtres"
+          style={{ flex: 1, gap: 8, justifyContent: 'flex-start' }}
+        >
+          <Icons.Filter size={14} stroke={1.7} style={{ color: 'var(--atlas-ink-3)' }} />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: 'var(--atlas-ink)',
+              fontSize: 13,
+              fontWeight: 500,
+              textAlign: 'left',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {zoneLabel}
           </span>
         </GlassPill>
         <GlassPill as="button" padding="8px 10px" aria-label="Filtres" onClick={onOpenFilters}>

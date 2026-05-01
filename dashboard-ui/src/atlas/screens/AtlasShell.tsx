@@ -5,6 +5,7 @@ import { listStages, matchesStage, sortListings } from '../data/adapt';
 import { useAtlasUrlState } from '../url';
 import { ALL_SOURCES, buildScanSources, useScan } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
+import { loadBasemap, saveBasemap, type Basemap } from '../mapPrefs';
 import { TopBar } from './TopBar';
 import { ListPanel } from './ListPanel';
 import { DetailPanel, PANEL_ANIM_MS } from './DetailPanel';
@@ -52,6 +53,12 @@ function DesktopShell() {
   const [routeOverlay, setRouteOverlay] = useState<RouteOverlay | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [basemap, setBasemap] = useState<Basemap>(() => loadBasemap());
+
+  const changeBasemap = useCallback((next: Basemap) => {
+    setBasemap(next);
+    saveBasemap(next);
+  }, []);
 
   const dismissCallback = useCallback((id: string) => dismiss.mutate(id), [dismiss]);
   const { pendingIds, pendingCount, schedule: schedulePending, undoAll: undoPending } =
@@ -232,6 +239,7 @@ function DesktopShell() {
           workplaceLabel={profile.workplace ? `Travail · ${profile.workplace}` : 'Travail'}
           workplace={profile.workplaceCoords ?? undefined}
           initialCenter={initialCenter}
+          basemap={basemap}
           routeOverlay={routeOverlay}
         />
       </div>
@@ -333,7 +341,8 @@ function DesktopShell() {
         onZoomIn={() => mapHandle.current?.zoomIn()}
         onZoomOut={() => mapHandle.current?.zoomOut()}
         onCompass={() => mapHandle.current?.resetBearing()}
-        onLayers={() => mapHandle.current?.flyToWorkplace()}
+        basemap={basemap}
+        onBasemapChange={changeBasemap}
       />
 
       {settingsOpen ? (

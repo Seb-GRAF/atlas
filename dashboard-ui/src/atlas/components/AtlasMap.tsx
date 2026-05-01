@@ -16,8 +16,22 @@ import maplibregl, {
   Marker,
   type StyleSpecification
 } from 'maplibre-gl';
+import { Protocol } from 'pmtiles';
 import { formatCHF } from './Mono';
+import { Icons } from '../icons';
 import type { RouteOverlay } from '../types';
+import type { Basemap } from '../mapPrefs';
+
+// Register the pmtiles:// protocol with maplibre-gl exactly once. The Protocol
+// instance keeps an internal LRU of opened archives, so re-registering on every
+// AtlasMap mount would tear that cache. Module scope = process scope = correct.
+let pmtilesRegistered = false;
+function ensurePmtilesProtocol() {
+  if (pmtilesRegistered) return;
+  const protocol = new Protocol();
+  maplibregl.addProtocol('pmtiles', protocol.tile);
+  pmtilesRegistered = true;
+}
 
 export type AtlasMapPin = {
   id: string;
@@ -43,62 +57,328 @@ type AtlasMapProps = {
   workplace?: { lat: number; lon: number };
   initialBounds?: LngLatBoundsLike;
   initialCenter?: { lat: number; lon: number; zoom?: number };
-  mode?: 'warm' | 'cool';
+  basemap?: Basemap;
   style?: CSSProperties;
   className?: string;
   routeOverlay?: RouteOverlay | null;
 };
 
-// CARTO Positron — clean, warm-leaning light raster basemap that matches the
-// design palette closely without needing a custom vector style. CARTO requires
-// the {a,b,c,d} subdomain rotation; MapLibre doesn't expand {s} so we pass an
-// explicit URL list. Override the whole list with a single VITE_MAP_TILE_URL
-// for self-hosted / proxy setups.
-const DEFAULT_CARTO_TILES = ['a', 'b', 'c', 'd'].map(
-  (s) => `https://${s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png`
-);
+// Protomaps demo bucket — open vector tiles (OSM-derived) in their v4 schema.
+// MapLibre range-fetches the single .pmtiles archive via the pmtiles:// protocol.
+// No API key, no per-request quota. The demo bucket is fine for development;
+// for production point VITE_PMTILES_URL at a self-hosted or regional extract
+// (Switzerland is small — roughly 100 MB — and easily self-hostable).
+const DEFAULT_PMTILES_URL = 'https://demo-bucket.protomaps.com/v4.pmtiles';
 
-const CARTO_TILES: string[] = (() => {
-  const envUrl = import.meta.env?.VITE_MAP_TILE_URL as string | undefined;
-  if (!envUrl) return DEFAULT_CARTO_TILES;
-  // Old VITE_MAP_TILE_URL used Leaflet's {s}/{r} placeholders — expand them
-  // here so the env stays compatible across implementations.
-  if (envUrl.includes('{s}')) {
-    return ['a', 'b', 'c', 'd'].map((s) => envUrl.replace('{s}', s).replace('{r}', '@2x'));
-  }
-  return [envUrl.replace('{r}', '@2x')];
-})();
+const PMTILES_URL: string =
+  (import.meta.env?.VITE_PMTILES_URL as string | undefined) || DEFAULT_PMTILES_URL;
 
-const CARTO_ATTRIBUTION =
-  (import.meta.env?.VITE_MAP_ATTRIBUTION as string | undefined) ||
-  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>';
+const VECTOR_ATTRIBUTION =
+  '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://protomaps.com">Protomaps</a>';
 
-function buildRasterStyle(): StyleSpecification {
+const SATELLITE_ATTRIBUTION =
+  'Imagery © <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics ' +
+  '· Labels © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+// ESRI World Imagery — free, no key, max zoom 19. Same provider Leaflet uses
+// in countless examples; community-acceptable for non-commercial dashboards.
+const SATELLITE_TILE_URL =
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+const GLYPHS_URL = 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf';
+
+// Warm palette — design tokens, used as MapLibre paint properties so each
+// feature class can be colored independently (no CSS filter wash).
+const COLOR = {
+  earth: '#f0e8db',
+  water: '#dfe7ec',
+  park: '#e7ebd8',
+  forest: '#dde4cc',
+  built: '#ece2cf',
+  roadMinor: '#fff8ee',
+  roadMajorFill: '#ffffff',
+  roadMajorCasing: '#e8dcc4',
+  rail: '#d8cfbd',
+  border: '#cdbfa2',
+  placeLabel: '#5a4f3d',
+  placeLabelHalo: 'rgba(255,248,238,0.85)',
+  roadLabel: '#7a6d57',
+  roadLabelHalo: 'rgba(255,248,238,0.9)',
+  satelliteLabel: '#ffffff',
+  satelliteLabelHalo: 'rgba(0,0,0,0.55)'
+};
+
+function buildVectorWarmStyle(): StyleSpecification {
   return {
     version: 8,
+    glyphs: GLYPHS_URL,
     sources: {
-      basemap: {
-        type: 'raster',
-        tiles: CARTO_TILES,
-        // @2x tiles are 512px — setting tileSize to match keeps the
-        // rendered zoom level and label sizes correct on retina screens.
-        tileSize: 512,
-        attribution: CARTO_ATTRIBUTION,
-        maxzoom: 19
+      protomaps: {
+        type: 'vector',
+        url: `pmtiles://${PMTILES_URL}`,
+        attribution: VECTOR_ATTRIBUTION
       }
     },
     layers: [
-      { id: 'bg', type: 'background', paint: { 'background-color': '#f0e8db' } },
-      { id: 'basemap', type: 'raster', source: 'basemap' }
+      { id: 'background', type: 'background', paint: { 'background-color': COLOR.earth } },
+      {
+        id: 'earth',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'earth',
+        paint: { 'fill-color': COLOR.earth }
+      },
+      {
+        id: 'landuse-park',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'landuse',
+        filter: ['in', ['get', 'kind'], ['literal', ['park', 'cemetery', 'protected_area', 'nature_reserve', 'golf_course']]],
+        paint: { 'fill-color': COLOR.park }
+      },
+      {
+        id: 'landuse-forest',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'landuse',
+        filter: ['in', ['get', 'kind'], ['literal', ['forest', 'wood']]],
+        paint: { 'fill-color': COLOR.forest }
+      },
+      {
+        id: 'landuse-built',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'landuse',
+        filter: ['in', ['get', 'kind'], ['literal', ['urban_area', 'residential', 'industrial', 'commercial']]],
+        minzoom: 11,
+        paint: { 'fill-color': COLOR.built, 'fill-opacity': 0.65 }
+      },
+      {
+        id: 'water',
+        type: 'fill',
+        source: 'protomaps',
+        'source-layer': 'water',
+        paint: { 'fill-color': COLOR.water }
+      },
+      {
+        id: 'rail',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'transit',
+        filter: ['==', ['get', 'kind'], 'rail'],
+        minzoom: 11,
+        paint: { 'line-color': COLOR.rail, 'line-width': ['interpolate', ['linear'], ['zoom'], 11, 0.5, 16, 1.4] }
+      },
+      {
+        id: 'roads-minor-casing',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['in', ['get', 'kind'], ['literal', ['minor_road', 'other']]],
+        minzoom: 12,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMajorCasing,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0, 14, 1.2, 18, 6]
+        }
+      },
+      {
+        id: 'roads-minor',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['in', ['get', 'kind'], ['literal', ['minor_road', 'other']]],
+        minzoom: 12,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMinor,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0, 14, 0.6, 18, 4]
+        }
+      },
+      {
+        id: 'roads-medium-casing',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['==', ['get', 'kind'], 'medium_road'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMajorCasing,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.6, 14, 2.2, 18, 9]
+        }
+      },
+      {
+        id: 'roads-medium',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['==', ['get', 'kind'], 'medium_road'],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMajorFill,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.3, 14, 1.6, 18, 7]
+        }
+      },
+      {
+        id: 'roads-major-casing',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['in', ['get', 'kind'], ['literal', ['major_road', 'highway']]],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMajorCasing,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.6, 14, 3.2, 18, 12]
+        }
+      },
+      {
+        id: 'roads-major',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        filter: ['in', ['get', 'kind'], ['literal', ['major_road', 'highway']]],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': COLOR.roadMajorFill,
+          'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.3, 14, 2.4, 18, 10]
+        }
+      },
+      {
+        id: 'boundaries',
+        type: 'line',
+        source: 'protomaps',
+        'source-layer': 'boundaries',
+        filter: ['<=', ['get', 'kind_detail'], 2],
+        paint: {
+          'line-color': COLOR.border,
+          'line-width': 0.6,
+          'line-dasharray': [3, 2],
+          'line-opacity': 0.5
+        }
+      },
+      {
+        id: 'roads-labels',
+        type: 'symbol',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        minzoom: 14,
+        filter: ['in', ['get', 'kind'], ['literal', ['minor_road', 'medium_road', 'major_road']]],
+        layout: {
+          'symbol-placement': 'line',
+          'text-font': ['Noto Sans Regular'],
+          'text-field': ['coalesce', ['get', 'name:fr'], ['get', 'name']],
+          'text-size': 11,
+          'text-letter-spacing': 0.02
+        },
+        paint: {
+          'text-color': COLOR.roadLabel,
+          'text-halo-color': COLOR.roadLabelHalo,
+          'text-halo-width': 1.2
+        }
+      },
+      {
+        id: 'places-locality',
+        type: 'symbol',
+        source: 'protomaps',
+        'source-layer': 'places',
+        filter: ['in', ['get', 'kind'], ['literal', ['locality', 'neighbourhood', 'suburb', 'city', 'town', 'village']]],
+        layout: {
+          'text-font': ['Noto Sans Regular'],
+          'text-field': ['coalesce', ['get', 'name:fr'], ['get', 'name']],
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6, 10,
+            10, 12,
+            14, 14
+          ],
+          'text-letter-spacing': 0.04,
+          'text-max-width': 7
+        },
+        paint: {
+          'text-color': COLOR.placeLabel,
+          'text-halo-color': COLOR.placeLabelHalo,
+          'text-halo-width': 1.4
+        }
+      }
     ]
   };
 }
 
-// Subtle warm wash blended on top of CARTO Positron to nudge it toward the
-// design palette (#f0e8db land, #fff8ee roads). Multiply with a warm tone is
-// gentler than the previous sepia/hue-rotate which muddied colors.
-const WARM_OVERLAY_FILTER = 'saturate(0.92) brightness(1.01) contrast(0.97)';
-const COOL_OVERLAY_FILTER = 'saturate(0.95) brightness(1.0)';
+function buildSatelliteStyle(): StyleSpecification {
+  return {
+    version: 8,
+    glyphs: GLYPHS_URL,
+    sources: {
+      imagery: {
+        type: 'raster',
+        tiles: [SATELLITE_TILE_URL],
+        tileSize: 256,
+        attribution: SATELLITE_ATTRIBUTION,
+        maxzoom: 19
+      },
+      protomaps: {
+        type: 'vector',
+        url: `pmtiles://${PMTILES_URL}`
+      }
+    },
+    layers: [
+      { id: 'background', type: 'background', paint: { 'background-color': '#0c1014' } },
+      { id: 'imagery', type: 'raster', source: 'imagery' },
+      {
+        id: 'roads-labels',
+        type: 'symbol',
+        source: 'protomaps',
+        'source-layer': 'roads',
+        minzoom: 14,
+        filter: ['in', ['get', 'kind'], ['literal', ['minor_road', 'medium_road', 'major_road']]],
+        layout: {
+          'symbol-placement': 'line',
+          'text-font': ['Noto Sans Regular'],
+          'text-field': ['coalesce', ['get', 'name:fr'], ['get', 'name']],
+          'text-size': 11,
+          'text-letter-spacing': 0.02
+        },
+        paint: {
+          'text-color': COLOR.satelliteLabel,
+          'text-halo-color': COLOR.satelliteLabelHalo,
+          'text-halo-width': 1.4
+        }
+      },
+      {
+        id: 'places-locality',
+        type: 'symbol',
+        source: 'protomaps',
+        'source-layer': 'places',
+        filter: ['in', ['get', 'kind'], ['literal', ['locality', 'neighbourhood', 'suburb', 'city', 'town', 'village']]],
+        layout: {
+          'text-font': ['Noto Sans Regular'],
+          'text-field': ['coalesce', ['get', 'name:fr'], ['get', 'name']],
+          'text-size': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            6, 10,
+            10, 12,
+            14, 14
+          ],
+          'text-letter-spacing': 0.04,
+          'text-max-width': 7
+        },
+        paint: {
+          'text-color': COLOR.satelliteLabel,
+          'text-halo-color': COLOR.satelliteLabelHalo,
+          'text-halo-width': 1.6
+        }
+      }
+    ]
+  };
+}
+
+function buildStyleFor(basemap: Basemap): StyleSpecification {
+  return basemap === 'satellite' ? buildSatelliteStyle() : buildVectorWarmStyle();
+}
 
 const DEFAULT_CENTER = { lat: 46.47, lon: 6.84, zoom: 11 };
 
@@ -260,22 +540,22 @@ function LegBadge({ label, color }: { label: string; color: string }) {
 function WorkplacePill({ label }: { label: string }) {
   return (
     <div
+      title={label}
+      aria-label={label}
       style={{
+        width: 28,
+        height: 28,
+        borderRadius: 999,
         background: 'var(--atlas-ink)',
         color: '#fff',
-        padding: '4px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 500,
-        letterSpacing: '-0.005em',
-        boxShadow: '0 6px 16px rgba(0,0,0,.18)',
-        fontFamily: 'var(--atlas-sans)',
-        pointerEvents: 'none',
-        whiteSpace: 'nowrap',
-        transform: 'translate(0, -6px)'
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 6px 16px rgba(0,0,0,.18), 0 0 0 2px #fff',
+        pointerEvents: 'none'
       }}
     >
-      {label}
+      <Icons.Briefcase size={15} stroke={1.8} />
     </div>
   );
 }
@@ -402,13 +682,14 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     workplace,
     initialBounds,
     initialCenter,
-    mode = 'warm',
+    basemap = 'vector',
     style,
     className,
     routeOverlay
   },
   ref
 ) {
+  ensurePmtilesProtocol();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, ManagedMarker>>(new Map());
@@ -418,6 +699,10 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
   const lastBoundsKeyRef = useRef<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [renderTick, setRenderTick] = useState(0);
+  // Bumped whenever the underlying style changes (e.g. vector ↔ satellite swap).
+  // Effects that add MapLibre sources/layers (the route overlay) depend on this
+  // so they re-add their content after `setStyle` blows the previous style away.
+  const [styleTick, setStyleTick] = useState(0);
 
   const center = initialCenter ?? DEFAULT_CENTER;
 
@@ -451,7 +736,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     if (!containerRef.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: buildRasterStyle(),
+      style: buildStyleFor(basemap),
       center: [center.lon, center.lat],
       zoom: center.zoom ?? DEFAULT_CENTER.zoom,
       attributionControl: { compact: true },
@@ -486,6 +771,29 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Swap basemap style (vector ↔ satellite) without recreating the map. After
+  // setStyle fires the previous sources/layers are gone, so we clear the route
+  // bookkeeping and bump styleTick to make the route-overlay effect re-attach
+  // its source + layers on top of the new style. DOM markers (pins, workplace,
+  // route badges) are MapLibre Markers that survive setStyle automatically.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+    routeLayersAddedRef.current = false;
+    map.setStyle(buildStyleFor(basemap), { diff: false });
+    const onStyleData = () => {
+      // Wait for the new style's first styledata event before letting the
+      // route effect re-add layers — adding to an unloaded style throws.
+      if (!map.isStyleLoaded()) return;
+      map.off('styledata', onStyleData);
+      setStyleTick((n) => n + 1);
+    };
+    map.on('styledata', onStyleData);
+    return () => {
+      map.off('styledata', onStyleData);
+    };
+  }, [basemap, loaded]);
 
   // Re-cluster on map move/zoom. We bump a tick so the marker-sync effect below
   // re-runs against the freshly-projected pixel positions. rAF-coalesced so a
@@ -735,7 +1043,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       // removal is handled by the next overlay change or null. But if the
       // component is unmounting entirely the map cleanup effect handles it.
     };
-  }, [routeOverlay, loaded]);
+  }, [routeOverlay, loaded, styleTick]);
 
   // Auto-fit the viewport to the visible pins (+ workplace) whenever the pin
   // set changes geographically. Without this the map kept its initial center
@@ -880,8 +1188,6 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [renderTick, selectedId, workplaceLabel, onSelect]);
 
-  const filter = mode === 'warm' ? WARM_OVERLAY_FILTER : COOL_OVERLAY_FILTER;
-
   return (
     <div
       ref={containerRef}
@@ -893,10 +1199,9 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
         background: 'var(--atlas-paper)',
         ...style
       }}
-      data-atlas-map-mode={mode}
+      data-atlas-basemap={basemap}
     >
       <style>{`
-        [data-atlas-map-mode="${mode}"] .maplibregl-canvas { filter: ${filter}; }
         .atlas-map-marker { will-change: transform; }
       `}</style>
       {portals}

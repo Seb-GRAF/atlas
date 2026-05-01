@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   AtlasMap,
   GlassPanel,
@@ -10,6 +10,7 @@ import {
   type AtlasMapHandle,
   type AtlasMapPin
 } from '../../components';
+import { loadBasemap, saveBasemap, type Basemap } from '../../mapPrefs';
 import type {
   AtlasListing,
   AtlasProfile,
@@ -79,6 +80,11 @@ export function MobileMap({
   const mapHandle = useRef<AtlasMapHandle>(null);
   const carouselRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [basemap, setBasemap] = useState<Basemap>(() => loadBasemap());
+  const changeBasemap = useCallback((next: Basemap) => {
+    setBasemap(next);
+    saveBasemap(next);
+  }, []);
   // The carousel-driven focus is local: swiping highlights a pin and pans the
   // map without opening the detail sheet. Tapping a card or pin still calls
   // `onSelect` which lifts to the URL and opens detail.
@@ -210,7 +216,7 @@ export function MobileMap({
           workplaceLabel={profile.workplace ? `Travail · ${profile.workplace}` : 'Travail'}
           workplace={profile.workplaceCoords ?? undefined}
           initialCenter={initialCenter}
-          mode="warm"
+          basemap={basemap}
           routeOverlay={routeOverlay}
         />
       </div>
@@ -280,7 +286,8 @@ export function MobileMap({
         onZoomIn={() => mapHandle.current?.zoomIn()}
         onZoomOut={() => mapHandle.current?.zoomOut()}
         onCompass={() => mapHandle.current?.resetBearing()}
-        onLayers={() => mapHandle.current?.flyToWorkplace()}
+        basemap={basemap}
+        onBasemapChange={changeBasemap}
       />
 
       {carouselListings.length > 0 ? (

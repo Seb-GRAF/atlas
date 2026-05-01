@@ -31,6 +31,7 @@ import {
   listingQualityRank,
   toDiscardedStub
 } from './lib/dedup.mjs';
+import { scrapeFacebookMarketplaceListings } from './lib/facebook-marketplace.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2463,9 +2464,21 @@ function makeDefaultConfig(profile, base = null) {
       naef: true,
       bernardNicod: true,
       retraitesListings: true,
-      anibis: false
+      anibis: false,
+      facebookMarketplace: false
     },
     flatfox: { maxPagesPerArea: 3, recheckKnownIdsLimit: 20 },
+    facebookMarketplace: {
+      query: 'louer appartement',
+      daysSinceListed: 2,
+      sortBy: 'creation_time_descend',
+      exact: false,
+      clusterDistanceKm: 25,
+      minRadiusKm: 10,
+      maxRadiusKm: 30,
+      maxScrollsPerSearch: 4,
+      maxListingsPerSearch: 60
+    },
     filters: {
       maxTotalChf: isSaintMaurice ? 1700 : 1400,
       maxTotalHardChf: isSaintMaurice ? 1700 : (isFribourg ? 1650 : 1550),
@@ -2496,13 +2509,27 @@ function makeDefaultConfig(profile, base = null) {
     naef: template.sources?.naef !== false,
     bernardNicod: template.sources?.bernardNicod !== false,
     retraitesListings: template.sources?.retraitesListings !== false,
-    anibis: !!template.sources?.anibis
+    anibis: !!template.sources?.anibis,
+    facebookMarketplace: !!template.sources?.facebookMarketplace
   };
   template.flatfox = {
     maxPagesPerArea: 3,
     recheckKnownIdsLimit: 20,
     ...(template.flatfox || {})
   };
+  template.facebookMarketplace = {
+    query: 'louer appartement',
+    daysSinceListed: 2,
+    sortBy: 'creation_time_descend',
+    exact: false,
+    clusterDistanceKm: 25,
+    minRadiusKm: 10,
+    maxRadiusKm: 30,
+    maxScrollsPerSearch: 4,
+    maxListingsPerSearch: 60,
+    ...(template.facebookMarketplace || {})
+  };
+  delete template.facebookMarketplace.queryTemplates;
 
   template.filters = {
     ...(template.filters || {}),
@@ -2595,6 +2622,7 @@ async function main() {
     if (typeof config.sources.bernardNicod !== 'boolean') config.sources.bernardNicod = true;
     if (typeof config.sources.retraitesListings !== 'boolean') config.sources.retraitesListings = true;
     if (typeof config.sources.anibis !== 'boolean') config.sources.anibis = false;
+    if (typeof config.sources.facebookMarketplace !== 'boolean') config.sources.facebookMarketplace = false;
   }
 
   if (PROFILE === 'saint-maurice') {
@@ -2628,7 +2656,8 @@ async function main() {
     config.sources?.naef !== false && { key: 'naef', label: 'naef.ch' },
     config.sources?.bernardNicod !== false && { key: 'bernard-nicod', label: 'bernard-nicod.ch' },
     config.sources?.retraitesListings !== false && { key: 'retraites-populaires', label: 'Retraites Populaires' },
-    config.sources?.anibis !== false && { key: 'anibis', label: 'anibis.ch' }
+    config.sources?.anibis !== false && { key: 'anibis', label: 'anibis.ch' },
+    config.sources?.facebookMarketplace === true && { key: 'facebook-marketplace', label: 'Facebook Marketplace' }
   ].filter(Boolean);
   const progressPhases = [
     { key: 'prepare-listings', label: 'Préparation des annonces', kind: 'phase' },
@@ -2799,6 +2828,18 @@ async function main() {
     config.sources?.anibis !== false && {
       label: 'anibis.ch',
       run: () => scrapeAnibisListings(config)
+    },
+    config.sources?.facebookMarketplace === true && {
+      label: 'Facebook Marketplace',
+      run: () => scrapeFacebookMarketplaceListings({
+        ...config,
+        geocodeCache,
+        geocodeOptions: { fetchJson, sleep },
+        facebookMarketplace: {
+          ...(config.facebookMarketplace || {}),
+          debugDir: config.facebookMarketplace?.debugDir || path.join(DATA_DIR, 'debug')
+        }
+      })
     }
   ].filter(Boolean);
 

@@ -109,6 +109,8 @@ export function buildAddressDedupKey(item) {
 }
 
 export function buildCrossSourceDedupKey(item) {
+  if (item?.dedupDisabled === true) return null;
+
   const address = buildAddressDedupKey(item);
   if (!address) return null;
 
@@ -130,6 +132,8 @@ export function buildCrossSourceDedupKey(item) {
 // (typically Bernard-Nicod cards) lacks m². Returns null if address is empty
 // or rooms+price are both missing — same guard as the primary key.
 export function buildSurfacelessDedupKey(item) {
+  if (item?.dedupDisabled === true) return null;
+
   const address = buildAddressDedupKey(item);
   if (!address) return null;
 

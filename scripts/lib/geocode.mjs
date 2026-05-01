@@ -11,6 +11,15 @@ export function normalizeGeocodeKey(query = '') {
   return String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+function normalizeGeocodeText(value = '') {
+  return normalizeGeocodeKey(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function parsePoint(latValue, lonValue) {
   const lat = Number(latValue);
   const lon = Number(lonValue);
@@ -28,6 +37,24 @@ export function parseGeoAdminPoint(payload) {
   for (const result of results) {
     if (isBroadGeoAdminResult(result?.attrs)) continue;
     const point = parsePoint(result?.attrs?.lat, result?.attrs?.lon);
+    if (point) return point;
+  }
+  return null;
+}
+
+function parseGeoAdminPointMatchingQuery(payload, query) {
+  const results = Array.isArray(payload?.results) ? payload.results : [];
+  const queryText = normalizeGeocodeText(query);
+  const queryTokens = queryText.split(/\s+/).filter((token) => token.length > 2);
+
+  for (const result of results) {
+    const attrs = result?.attrs || {};
+    if (isBroadGeoAdminResult(attrs)) continue;
+    const haystack = normalizeGeocodeText(`${attrs.label || ''} ${attrs.detail || ''}`);
+    if (queryTokens.length && haystack && !queryTokens.every((token) => haystack.includes(token))) {
+      continue;
+    }
+    const point = parsePoint(attrs.lat, attrs.lon);
     if (point) return point;
   }
   return null;
@@ -148,6 +175,54 @@ export async function geocodeAddress(query, cache, options = {}) {
     }
   }
 
+  cache[key] = null;
+  return null;
+}
+
+export async function geocodeMunicipality(label, cache, options = {}) {
+  const normalizedLabel = normalizeGeocodeKey(label);
+  if (!normalizedLabel) return null;
+
+  const key = `municipality:${normalizedLabel}`;
+  const warn = typeof options.warn === 'function' ? options.warn : console.warn;
+  const cached = cache?.[key];
+  if (cached && typeof cached === 'object') {
+    const point = parsePoint(cached.lat, cached.lon);
+    if (point) return point;
+  }
+
+  const fetchJson = options.fetchJson;
+  if (typeof fetchJson !== 'function') {
+    throw new Error('geocodeMunicipality requires options.fetchJson');
+  }
+
+  try {
+    const payload = await fetchJson(buildGeoAdminUrl(label, 'gg25'));
+    const point = parseGeoAdminPointMatchingQuery(payload, label);
+    if (point) {
+      cache[key] = point;
+      return point;
+    }
+  } catch (err) {
+    warn(`WARN municipality geocode failed for "${label}": ${err.message}`);
+    cache[key] = null;
+    return null;
+  }
+
+  try {
+    const payload = await fetchJson(buildGeoAdminUrl(label));
+    const point = parseGeoAdminPointMatchingQuery(payload, label) || parseGeoAdminPoint(payload);
+    if (point) {
+      cache[key] = point;
+      return point;
+    }
+  } catch (err) {
+    warn(`WARN municipality geocode fallback failed for "${label}": ${err.message}`);
+    cache[key] = null;
+    return null;
+  }
+
+  warn(`WARN municipality geocode failed for "${label}"`);
   cache[key] = null;
   return null;
 }

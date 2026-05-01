@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   geocodeAddress,
+  geocodeMunicipality,
   parseGeoAdminPoint,
   parseNominatimPoint,
   parsePhotonPoint
@@ -175,4 +176,88 @@ test('geocodeAddress returns cached valid coordinates without external requests'
   });
 
   assert.deepEqual(point, { lat: 46.5, lon: 6.6 });
+});
+
+test('geocodeMunicipality resolves Swiss municipality coordinates with gg25 origin', async () => {
+  const cache = {};
+  const requested = [];
+
+  const point = await geocodeMunicipality('Pully', cache, {
+    fetchJson: async (url) => {
+      requested.push(url);
+      assert.equal(new URL(url).searchParams.get('origins'), 'gg25');
+      return {
+        results: [
+          {
+            attrs: {
+              lat: 46.5103,
+              lon: 6.6618
+            }
+          }
+        ]
+      };
+    }
+  });
+
+  assert.deepEqual(point, { lat: 46.5103, lon: 6.6618 });
+  assert.equal(requested.length, 1);
+  assert.deepEqual(cache['municipality:pully'], point);
+});
+
+test('geocodeMunicipality falls back to Swiss place search when gg25 result does not match label', async () => {
+  const cache = {};
+  const requested = [];
+
+  const point = await geocodeMunicipality('Chalet-à-Gobet', cache, {
+    fetchJson: async (url) => {
+      requested.push(url);
+      const parsed = new URL(url);
+      if (parsed.searchParams.get('origins') === 'gg25') {
+        return {
+          results: [
+            {
+              attrs: {
+                label: '<b>Schlatt-Haslen (AI)</b>',
+                detail: 'schlatt-haslen ai',
+                lat: 47.36384582519531,
+                lon: 9.396883964538574
+              }
+            }
+          ]
+        };
+      }
+      return {
+        results: [
+          {
+            attrs: {
+              origin: 'gazetteer',
+              label: '<i>Populated Place</i> <b>Chalet-à-Gobet</b> (VD) - Lausanne',
+              lat: 46.561798095703125,
+              lon: 6.684054374694824
+            }
+          }
+        ]
+      };
+    }
+  });
+
+  assert.deepEqual(point, { lat: 46.561798095703125, lon: 6.684054374694824 });
+  assert.equal(requested.length, 2);
+  assert.equal(new URL(requested[0]).searchParams.get('origins'), 'gg25');
+  assert.equal(new URL(requested[1]).searchParams.get('origins'), null);
+  assert.deepEqual(cache['municipality:chalet-à-gobet'], point);
+});
+
+test('geocodeMunicipality returns null and warns when no coordinate is available', async () => {
+  const cache = {};
+  const warnings = [];
+
+  const point = await geocodeMunicipality('Unknown Place', cache, {
+    fetchJson: async () => ({ results: [] }),
+    warn: (message) => warnings.push(message)
+  });
+
+  assert.equal(point, null);
+  assert.deepEqual(warnings, ['WARN municipality geocode failed for "Unknown Place"']);
+  assert.equal(cache['municipality:unknown place'], null);
 });

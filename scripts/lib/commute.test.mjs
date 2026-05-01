@@ -158,7 +158,8 @@ test('normalizeTransitConnection converts walk and transport sections into route
         to: 'Vevey',
         departureAt: '2026-05-04T07:09:00+0200',
         arrivalAt: '2026-05-04T07:14:00+0200',
-        minutes: 5
+        minutes: 5,
+        coords: []
       },
       {
         type: 'transit',
@@ -170,7 +171,8 @@ test('normalizeTransitConnection converts walk and transport sections into route
         to: 'Lausanne',
         departureAt: '2026-05-04T07:14:00+0200',
         arrivalAt: '2026-05-04T07:29:00+0200',
-        minutes: 15
+        minutes: 15,
+        coords: []
       },
       {
         type: 'transit',
@@ -182,10 +184,66 @@ test('normalizeTransitConnection converts walk and transport sections into route
         to: 'Lausanne, Bessières',
         departureAt: '2026-05-04T07:35:00+0200',
         arrivalAt: '2026-05-04T07:39:00+0200',
-        minutes: 4
+        minutes: 4,
+        coords: []
       }
     ]
   });
+});
+
+test('normalizeTransitConnection extracts station coordinates and journey passList into leg.coords', () => {
+  const connection = {
+    sections: [
+      {
+        journey: null,
+        walk: { duration: 180 },
+        departure: {
+          station: { name: 'Lausanne, Av. de la Gare', coordinate: { type: 'WGS84', x: 46.5170, y: 6.6320 } },
+          departure: '2026-05-04T07:09:00+0200'
+        },
+        arrival: {
+          station: { name: 'Lausanne, gare', coordinate: { type: 'WGS84', x: 46.5176, y: 6.6296 } },
+          arrival: '2026-05-04T07:12:00+0200'
+        }
+      },
+      {
+        journey: {
+          category: 'IC',
+          number: '1',
+          to: 'Geneva',
+          passList: [
+            { station: { name: 'Lausanne', coordinate: { type: 'WGS84', x: 46.5168, y: 6.6291 } }, departure: '2026-05-04T07:15:00+0200' },
+            { station: { name: 'Renens VD', coordinate: { type: 'WGS84', x: 46.5378, y: 6.5786 } }, departure: '2026-05-04T07:20:00+0200' },
+            { station: { name: 'Morges', coordinate: { type: 'WGS84', x: 46.5099, y: 6.4983 } }, arrival: '2026-05-04T07:30:00+0200' }
+          ]
+        },
+        walk: null,
+        departure: { station: { name: 'Lausanne', coordinate: { type: 'WGS84', x: 46.5168, y: 6.6291 } }, departure: '2026-05-04T07:15:00+0200' },
+        arrival: { station: { name: 'Morges', coordinate: { type: 'WGS84', x: 46.5099, y: 6.4983 } }, arrival: '2026-05-04T07:30:00+0200' }
+      }
+    ]
+  };
+
+  const result = normalizeTransitConnection(connection, { date: '2026-05-04', arrivalTime: '08:00' });
+  assert.deepEqual(result.legs[0].coords, [[6.6320, 46.5170], [6.6296, 46.5176]]);
+  // Transit leg keeps the full passList; endpoints already match passList edges.
+  assert.deepEqual(result.legs[1].coords, [[6.6291, 46.5168], [6.5786, 46.5378], [6.4983, 46.5099]]);
+});
+
+test('normalizeTransitConnection handles missing station coordinates gracefully', () => {
+  const connection = {
+    sections: [
+      {
+        journey: null,
+        walk: { duration: 60 },
+        departure: { station: { name: 'No Coord' }, departure: '2026-05-04T07:00:00+0200' },
+        arrival: { station: { name: 'Other', coordinate: { type: 'WGS84', x: 46.0, y: 6.0 } }, arrival: '2026-05-04T07:01:00+0200' }
+      }
+    ]
+  };
+  const result = normalizeTransitConnection(connection, { date: '2026-05-04', arrivalTime: '08:00' });
+  // Missing coordinate is omitted, not replaced with NaN/null.
+  assert.deepEqual(result.legs[0].coords, [[6.0, 46.0]]);
 });
 
 test('setCommuteSuccessFields writes compatibility and structured fields', () => {

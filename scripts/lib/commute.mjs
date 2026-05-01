@@ -124,6 +124,34 @@ function stationName(stop) {
   return String(stop?.station?.name || '').trim();
 }
 
+// transport.opendata.ch encodes coordinates as { x: latitude, y: longitude }
+// (geo-flipped from typical GIS). Normalize here to a standard [lng, lat]
+// tuple so downstream code never has to think about it. Returns null when
+// either component is missing or non-finite (address-based searches often
+// have no station coord on the first/last hop).
+function stationLngLat(station) {
+  const co = station?.coordinate;
+  if (!co) return null;
+  const lat = Number(co.x);
+  const lng = Number(co.y);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return [lng, lat];
+}
+
+function passListLngLats(passList) {
+  if (!Array.isArray(passList)) return [];
+  const out = [];
+  for (const stop of passList) {
+    const point = stationLngLat(stop?.station);
+    if (point) out.push(point);
+  }
+  return out;
+}
+
+function pointsEqual(a, b) {
+  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+}
+
 function stopDeparture(stop) {
   return stop?.departure || stop?.arrival || null;
 }
@@ -150,10 +178,25 @@ export function normalizeTransitConnection(connection, transitRef) {
     const arrivalAt = stopArrival(section.arrival);
     const from = stationName(section.departure);
     const to = stationName(section.arrival);
+    const fromCoord = stationLngLat(section.departure?.station);
+    const toCoord = stationLngLat(section.arrival?.station);
 
     if (section.journey) {
       const mode = String(section.journey.category || '').trim().toUpperCase();
       const line = String(section.journey.number || '').trim();
+      // Build the transit polyline from the journey's passList so the
+      // dashboard can draw the actual station-by-station path without
+      // calling Nominatim/OSRM at view time. Pad with the section
+      // endpoints if passList is empty or missing edges.
+      const inner = passListLngLats(section.journey.passList);
+      const coords = [];
+      if (fromCoord && (inner.length === 0 || !pointsEqual(inner[0], fromCoord))) {
+        coords.push(fromCoord);
+      }
+      for (const p of inner) coords.push(p);
+      if (toCoord && (coords.length === 0 || !pointsEqual(coords[coords.length - 1], toCoord))) {
+        coords.push(toCoord);
+      }
       legs.push({
         type: 'transit',
         mode,
@@ -164,7 +207,8 @@ export function normalizeTransitConnection(connection, transitRef) {
         to,
         departureAt,
         arrivalAt,
-        minutes: minutesBetweenIso(departureAt, arrivalAt)
+        minutes: minutesBetweenIso(departureAt, arrivalAt),
+        coords
       });
       continue;
     }
@@ -174,6 +218,10 @@ export function normalizeTransitConnection(connection, transitRef) {
       const walkMinutes = Number.isFinite(walkSeconds) && walkSeconds > 0
         ? Math.max(1, Math.round(walkSeconds / 60))
         : minutesBetweenIso(departureAt, arrivalAt);
+      // Walk legs only carry endpoint coords; the dashboard uses them as
+      // OSRM `foot` input for sidewalk geometry. Either endpoint may be
+      // null (address-based searches).
+      const coords = [fromCoord, toCoord].filter(Boolean);
       legs.push({
         type: 'walk',
         mode: 'walk',
@@ -184,7 +232,8 @@ export function normalizeTransitConnection(connection, transitRef) {
         to,
         departureAt,
         arrivalAt,
-        minutes: walkMinutes
+        minutes: walkMinutes,
+        coords
       });
     }
   }

@@ -21,6 +21,7 @@ const STATUS_WORKFLOW_VERSION = 2;
 const GEO_ADMIN_SEARCH_URL = process.env.GEO_ADMIN_SEARCH_URL || 'https://api3.geo.admin.ch/rest/services/api/SearchServer';
 const MAP_GEOCODE_ON_STATE = process.env.MAP_GEOCODE_ON_STATE !== '0';
 const MAP_GEOCODE_BATCH_LIMIT = Math.max(0, Number(process.env.MAP_GEOCODE_BATCH_LIMIT || 12));
+const BROAD_SWISS_REGION_POINT = { lat: 47.0986213684082, lon: 7.954939365386963 };
 const DEFAULT_STATUSES = [
   'À trier',
   'À contacter',
@@ -94,7 +95,13 @@ function toFinitePoint(value) {
   const lon = Number(value.lon ?? value.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
   if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  if (isKnownBadBroadRegionPoint({ lat, lon })) return null;
   return { lat, lon };
+}
+
+function isKnownBadBroadRegionPoint(point) {
+  return Math.abs(point.lat - BROAD_SWISS_REGION_POINT.lat) < 0.000001
+    && Math.abs(point.lon - BROAD_SWISS_REGION_POINT.lon) < 0.000001;
 }
 
 function sanitizeAddressPart(value = '') {

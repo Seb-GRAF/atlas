@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react';
 
-type Variant = 'primary' | 'secondary' | 'ghost';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 type AtlasButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
@@ -41,6 +41,12 @@ const VARIANT_STYLE: Record<Variant, CSSProperties> = {
     background: 'var(--atlas-soft)',
     color: 'var(--atlas-ink)',
     padding: '8px 12px'
+  },
+  danger: {
+    background: 'var(--atlas-paper)',
+    color: 'var(--atlas-bad)',
+    padding: '10px 14px',
+    boxShadow: 'inset 0 0 0 1px color-mix(in oklch, var(--atlas-bad) 35%, var(--atlas-line))'
   }
 };
 

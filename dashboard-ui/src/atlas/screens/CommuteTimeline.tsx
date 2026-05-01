@@ -1,5 +1,7 @@
+import { Fragment, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Hairline, Icons, Mono } from '../components';
+import { colorForLeg } from '../data/routeViz';
 import type { AtlasListing, CommuteLeg } from '../types';
 
 type CommuteTimelineListing = Pick<
@@ -16,13 +18,19 @@ type CommuteTimelineListing = Pick<
   | 'commuteWarnings'
 >;
 
-type CommuteTimelineProps = { listing: CommuteTimelineListing };
+type CommuteTimelineProps = {
+  listing: CommuteTimelineListing;
+  onVisualize?: () => void;
+  visualizing?: boolean;
+  visualizingLoading?: boolean;
+};
 
 const sectionStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 10,
-  minWidth: 0
+  minWidth: 0,
+  flexShrink: 0
 };
 
 const eyebrowStyle: CSSProperties = {
@@ -93,6 +101,133 @@ function legLabel(leg: CommuteLeg): string {
   return leg.label || leg.line || leg.mode || 'PT';
 }
 
+function formatHHMM(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString('fr-CH', { hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return null;
+  }
+}
+
+function secondaryLine(legs: CommuteLeg[]): string | null {
+  const firstTransit = legs.find(l => l.type === 'transit' && l.departureAt);
+  if (firstTransit) {
+    const time = formatHHMM(firstTransit.departureAt);
+    if (!time) return null;
+    return firstTransit.from ? `${time} de ${firstTransit.from}` : time;
+  }
+  const firstWithTime = legs.find(l => l.departureAt);
+  if (firstWithTime) return formatHHMM(firstWithTime.departureAt);
+  return null;
+}
+
+function compactTransitLabel(leg: CommuteLeg): string {
+  return (leg.line || leg.mode || 'PT').toString().toUpperCase();
+}
+
+function WalkBadge({ minutes }: { minutes: number | null }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: '3px 7px', borderRadius: 999,
+      background: 'var(--atlas-ink)', color: 'var(--atlas-paper)',
+      fontFamily: 'var(--atlas-mono)', fontSize: 11, fontWeight: 500,
+      whiteSpace: 'nowrap'
+    }}>
+      <Icons.Walk size={11} stroke={2} />
+      {minutes != null ? Math.round(minutes) : ''}
+    </span>
+  );
+}
+
+function TransitBadge({ leg }: { leg: CommuteLeg }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center',
+      padding: '3px 8px', borderRadius: 6,
+      background: colorForLeg(leg), color: '#fff',
+      fontFamily: 'var(--atlas-mono)', fontSize: 11, fontWeight: 600,
+      letterSpacing: '0.02em', whiteSpace: 'nowrap'
+    }}>
+      {compactTransitLabel(leg)}
+    </span>
+  );
+}
+
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width={12}
+      height={12}
+      viewBox="0 0 12 12"
+      aria-hidden="true"
+      style={{
+        flexShrink: 0,
+        color: 'var(--atlas-ink-3)',
+        transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+        transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)'
+      }}
+    >
+      <path
+        d="M2.5 4.5L6 8L9.5 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function CommuteSummaryStrip({
+  legs,
+  open,
+  onToggle
+}: {
+  legs: CommuteLeg[];
+  open: boolean;
+  onToggle: () => void;
+}) {
+  if (legs.length === 0) return null;
+  const secondary = secondaryLine(legs);
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 10px', border: 0, borderRadius: 8,
+        background: 'var(--atlas-paper-2)', boxShadow: '0 0 0 1px var(--atlas-line)',
+        textAlign: 'left', cursor: 'pointer', width: '100%', minWidth: 0,
+        fontFamily: 'inherit',
+        transition: 'background 160ms ease, box-shadow 160ms ease'
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          {legs.map((leg, i) => (
+            <Fragment key={`${leg.type}-${leg.from}-${leg.to}-${i}`}>
+              {leg.type === 'walk' ? <WalkBadge minutes={leg.minutes} /> : <TransitBadge leg={leg} />}
+              {i < legs.length - 1 ? (
+                <span style={{ color: 'var(--atlas-ink-3)', fontSize: 12 }}>›</span>
+              ) : null}
+            </Fragment>
+          ))}
+        </div>
+        {secondary ? (
+          <Mono style={{ fontSize: 11, color: 'var(--atlas-ink-3)' }}>{secondary}</Mono>
+        ) : null}
+      </div>
+      <Chevron open={open} />
+    </button>
+  );
+}
+
 function modeIcon(leg: CommuteLeg) {
   if (leg.type === 'walk') return <Icons.Walk size={13} stroke={1.8} />;
   return <Icons.Train size={13} stroke={1.8} />;
@@ -100,12 +235,10 @@ function modeIcon(leg: CommuteLeg) {
 
 function SummaryItem({
   icon,
-  prefix,
   value,
   status
 }: {
   icon: ReactNode;
-  prefix: string;
   value: string;
   status: string | null;
 }) {
@@ -113,7 +246,7 @@ function SummaryItem({
     <div style={{ ...summaryStyle, color: status ? 'var(--atlas-ink-3)' : 'var(--atlas-ink)' }}>
       <span style={{ flexShrink: 0 }}>{icon}</span>
       <Mono style={{ ...labelStyle, fontSize: 12, fontWeight: 500 }}>
-        {prefix} {value}
+        {value}
       </Mono>
       {status ? <Mono style={{ ...labelStyle, maxWidth: 74, fontSize: 10.5, color: 'currentColor', opacity: 0.8 }}>{status}</Mono> : null}
     </div>
@@ -151,12 +284,14 @@ function TimelineLeg({ leg, last }: { leg: CommuteLeg; last: boolean }) {
   );
 }
 
-export function CommuteTimeline({ listing }: CommuteTimelineProps) {
+export function CommuteTimeline({ listing, onVisualize, visualizing, visualizingLoading }: CommuteTimelineProps) {
+  const [expanded, setExpanded] = useState(false);
   const warnings = listing.commuteWarnings ?? [];
   const transitStatus = statusLabel(listing.transitRouteStatus);
   const driveStatus = statusLabel(listing.driveRouteStatus);
   const legs = listing.transitRoute?.legs ?? [];
   const baseline = routeLabel(listing);
+  const canVisualize = !!onVisualize && legs.length > 0;
   const hasData =
     !!listing.transitText ||
     !!listing.driveText ||
@@ -172,20 +307,46 @@ export function CommuteTimeline({ listing }: CommuteTimelineProps) {
 
   return (
     <section style={sectionStyle} aria-label="Trajet">
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
-        <span style={eyebrowStyle}>Trajet</span>
-        {baseline ? <span style={{ ...statusTextStyle, overflowWrap: 'anywhere' }}>{baseline}</span> : null}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, minWidth: 0, flex: 1 }}>
+          <span style={eyebrowStyle}>Trajet</span>
+          {baseline ? <span style={{ ...statusTextStyle, overflowWrap: 'anywhere' }}>{baseline}</span> : null}
+        </div>
+        {canVisualize ? (
+          <button
+            type="button"
+            onClick={onVisualize}
+            disabled={visualizingLoading}
+            aria-pressed={visualizing}
+            style={{
+              flexShrink: 0,
+              border: 0,
+              padding: '5px 10px',
+              borderRadius: 999,
+              fontFamily: 'var(--atlas-sans)',
+              fontSize: 11,
+              fontWeight: 500,
+              letterSpacing: '0.02em',
+              cursor: visualizingLoading ? 'progress' : 'pointer',
+              background: visualizing ? 'var(--atlas-ink)' : 'var(--atlas-paper-2)',
+              color: visualizing ? '#fff' : 'var(--atlas-ink)',
+              boxShadow: visualizing ? 'none' : '0 0 0 1px var(--atlas-line)',
+              opacity: visualizingLoading ? 0.7 : 1,
+              transition: 'background 140ms ease, color 140ms ease'
+            }}
+          >
+            {visualizingLoading ? 'Calcul…' : visualizing ? 'Masquer le trajet' : 'Visualiser le trajet'}
+          </button>
+        ) : null}
       </div>
       <div style={summaryGridStyle}>
         <SummaryItem
           icon={<Icons.Train size={13} stroke={1.8} />}
-          prefix="PT"
           value={durationText(listing.transitText, listing.transitMinutes)}
           status={transitStatus}
         />
         <SummaryItem
           icon={<Icons.Drive size={13} stroke={1.8} />}
-          prefix="CAR"
           value={durationText(listing.driveText, listing.driveMinutes)}
           status={driveStatus}
         />
@@ -200,9 +361,42 @@ export function CommuteTimeline({ listing }: CommuteTimelineProps) {
       {warnings.length > 0 ? (
         <div style={statusTextStyle}>{warnings.join(' · ')}</div>
       ) : null}
-      {legs.map((leg, index) => (
-        <TimelineLeg key={`${leg.type}-${leg.from}-${leg.to}-${index}`} leg={leg} last={index === legs.length - 1} />
-      ))}
+      {legs.length > 0 ? (
+        <>
+          <CommuteSummaryStrip legs={legs} open={expanded} onToggle={() => setExpanded(v => !v)} />
+          <div
+            aria-hidden={!expanded}
+            style={{
+              display: 'grid',
+              gridTemplateRows: expanded ? '1fr' : '0fr',
+              opacity: expanded ? 1 : 0,
+              transition: 'grid-template-rows 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease',
+              minHeight: 0
+            }}
+          >
+            <div style={{ overflow: 'hidden', minHeight: 0 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  paddingTop: 8,
+                  transform: expanded ? 'translateY(0)' : 'translateY(-4px)',
+                  transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)'
+                }}
+              >
+                {legs.map((leg, index) => (
+                  <TimelineLeg
+                    key={`${leg.type}-${leg.from}-${leg.to}-${index}`}
+                    leg={leg}
+                    last={index === legs.length - 1}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : null}
     </section>
   );
 }

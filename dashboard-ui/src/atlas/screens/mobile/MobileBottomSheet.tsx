@@ -1,18 +1,13 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Drawer } from 'vaul';
-
-type SnapPoint = string | number;
+import { Icons } from '../../icons';
 
 type MobileBottomSheetProps = {
   open: boolean;
   onClose: () => void;
   title: string;
-  snapPoints?: SnapPoint[];
-  initialSnapIndex?: number;
   children: ReactNode;
   contentRef?: (el: HTMLDivElement | null) => void;
-  onPointerDownOutside?: (event: Event) => void;
-  onInteractOutside?: (event: Event) => void;
 };
 
 const SCRIM_TRANSITION = '220ms cubic-bezier(0.32, 0.72, 0, 1)';
@@ -59,7 +54,6 @@ const titleHiddenStyle: CSSProperties = {
   border: 0
 };
 
-// Tint the iOS status bar to match the dimmed backdrop while a sheet is open.
 const STATUS_BAR_OPEN = '#3b352c';
 const STATUS_BAR_META_ID = 'atlas-theme-color';
 
@@ -85,7 +79,6 @@ function useStatusBarTint(active: boolean) {
   }, [active]);
 }
 
-// Disable iOS pull-to-refresh / bounce on the page while a sheet is open.
 function useLockPageOverscroll(active: boolean) {
   useEffect(() => {
     if (!active) return;
@@ -102,24 +95,12 @@ function useLockPageOverscroll(active: boolean) {
   }, [active]);
 }
 
-export const DEFAULT_SNAP_POINTS: SnapPoint[] = [0.66, 1];
-
 export function MobileBottomSheet({
   open,
   onClose,
   title,
-  snapPoints = DEFAULT_SNAP_POINTS,
-  initialSnapIndex = 0,
-  children,
-  onPointerDownOutside,
-  onInteractOutside
+  children
 }: MobileBottomSheetProps) {
-  const [activeSnap, setActiveSnap] = useState<SnapPoint | null>(snapPoints[initialSnapIndex]);
-
-  useEffect(() => {
-    if (open) setActiveSnap(snapPoints[initialSnapIndex]);
-  }, [open, initialSnapIndex, snapPoints]);
-
   useStatusBarTint(open);
   useLockPageOverscroll(open);
 
@@ -142,10 +123,7 @@ export function MobileBottomSheet({
       onOpenChange={(next) => {
         if (!next) onClose();
       }}
-      snapPoints={snapPoints}
-      activeSnapPoint={activeSnap}
-      setActiveSnapPoint={setActiveSnap}
-      snapToSequentialPoint
+      shouldScaleBackground={false}
     >
       <Drawer.Portal>
         {scrimMounted ? (
@@ -162,17 +140,17 @@ export function MobileBottomSheet({
         <Drawer.Content
           style={contentStyle}
           aria-describedby={undefined}
-          onPointerDownOutside={onPointerDownOutside}
-          onInteractOutside={onInteractOutside}
         >
           <Drawer.Title style={titleHiddenStyle}>{title}</Drawer.Title>
 
           <div
             style={{
+              position: 'relative',
               flexShrink: 0,
               padding: '8px 0 4px',
               display: 'flex',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              alignItems: 'center'
             }}
           >
             <Drawer.Handle
@@ -184,6 +162,29 @@ export function MobileBottomSheet({
                 opacity: 1
               }}
             />
+            <button
+              type="button"
+              aria-label="Fermer"
+              onClick={onClose}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: 6,
+                width: 30,
+                height: 30,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 999,
+                border: 0,
+                background: 'rgba(22,20,15,.06)',
+                color: 'var(--atlas-ink-2, var(--atlas-ink))',
+                cursor: 'pointer',
+                padding: 0
+              }}
+            >
+              <Icons.Close size={16} />
+            </button>
           </div>
 
           {children}

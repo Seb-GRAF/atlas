@@ -91,7 +91,7 @@ export function CommuteChips({ listing, compact = false, style }: CommuteChipsPr
         style={{ ...chipStyle, ...chipTone(listing.transitRouteStatus, !!listing.transitText) }}
       >
         <Icons.Train size={compact ? 11 : 12} stroke={1.8} style={iconStyle} />
-        <Mono style={valueStyle}>PT {transitValue}</Mono>
+        <Mono style={valueStyle}>{transitValue}</Mono>
         {transitStatus ? <Mono style={{ ...valueStyle, ...statusStyle }}>{transitStatus.suffix}</Mono> : null}
       </span>
       <span
@@ -100,7 +100,7 @@ export function CommuteChips({ listing, compact = false, style }: CommuteChipsPr
         style={{ ...chipStyle, ...chipTone(listing.driveRouteStatus, !!listing.driveText) }}
       >
         <Icons.Drive size={compact ? 11 : 12} stroke={1.8} style={iconStyle} />
-        <Mono style={valueStyle}>CAR {driveValue}</Mono>
+        <Mono style={valueStyle}>{driveValue}</Mono>
         {driveStatus ? <Mono style={{ ...valueStyle, ...statusStyle }}>{driveStatus.suffix}</Mono> : null}
       </span>
     </div>

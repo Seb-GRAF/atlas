@@ -36,6 +36,10 @@ export type CommuteLeg = {
   departureAt: string | null;
   arrivalAt: string | null;
   minutes: number | null;
+  // [lng, lat] tuples. Transit legs carry the journey's passList; walk legs
+  // carry just the endpoints. Optional for backward compatibility with
+  // tracker.json files written before this field existed.
+  coords?: [number, number][];
 };
 
 export type TransitRoute = {
@@ -45,6 +49,25 @@ export type TransitRoute = {
   arrivalAt: string | null;
   products: string[];
   legs: CommuteLeg[];
+};
+
+export type RouteOverlayLeg = {
+  kind: 'walk' | 'transit';
+  mode: string;
+  label: string;
+  color: string;
+  coords: [number, number][];
+  failed: boolean;
+  fromName: string;
+  toName: string;
+  minutes: number | null;
+};
+
+export type RouteOverlay = {
+  listingId: string;
+  legs: RouteOverlayLeg[];
+  bounds: [[number, number], [number, number]];
+  failedCount: number;
 };
 
 export type AtlasListing = {

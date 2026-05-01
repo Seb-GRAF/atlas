@@ -59,7 +59,8 @@ export function StatGrid({ rooms, surfaceM2, driveText }: StatGridProps) {
         background: 'var(--atlas-line)',
         borderRadius: 12,
         overflow: 'hidden',
-        boxShadow: '0 0 0 1px var(--atlas-line)'
+        boxShadow: '0 0 0 1px var(--atlas-line)',
+        flexShrink: 0
       }}
     >
       <StatCell

@@ -14,7 +14,8 @@ import type {
   AtlasListing,
   AtlasProfile,
   AtlasStage,
-  AtlasStageValue
+  AtlasStageValue,
+  RouteOverlay
 } from '../../types';
 
 const VEVEY_FALLBACK = { lat: 46.47, lon: 6.84, zoom: 11 };
@@ -28,6 +29,7 @@ type MobileMapProps = {
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
   onOpenFilters: () => void;
+  routeOverlay?: RouteOverlay | null;
 };
 
 const rootStyle: CSSProperties = {
@@ -71,7 +73,8 @@ export function MobileMap({
   stage,
   onStageChange,
   onSelect,
-  onOpenFilters
+  onOpenFilters,
+  routeOverlay
 }: MobileMapProps) {
   const mapHandle = useRef<AtlasMapHandle>(null);
   const carouselRef = useRef<HTMLDivElement | null>(null);
@@ -208,6 +211,7 @@ export function MobileMap({
           workplace={profile.workplaceCoords ?? undefined}
           initialCenter={initialCenter}
           mode="warm"
+          routeOverlay={routeOverlay}
         />
       </div>
 
@@ -425,6 +429,7 @@ function MiniCard({ listing, selected, onSelect, registerRef }: MiniCardProps) {
             {listing.totalChf != null ? (
               <Mono style={{ fontSize: 14, fontWeight: 500 }}>
                 {formatCHF(listing.totalChf)}
+                <span style={{ fontSize: 11, color: 'var(--atlas-ink-3)', marginLeft: 3 }}>CHF</span>
               </Mono>
             ) : (
               <span style={{ fontSize: 12, color: 'var(--atlas-ink-3)' }}>n/a</span>

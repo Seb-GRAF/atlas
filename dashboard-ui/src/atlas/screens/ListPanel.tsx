@@ -10,6 +10,7 @@ type ListPanelProps = {
   listings: AtlasListing[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onArchive?: (id: string) => void;
   generatedAt: string;
   totalCount?: number;
   emptyContent?: React.ReactNode;
@@ -51,6 +52,7 @@ export function ListPanel({
   listings,
   selectedId,
   onSelect,
+  onArchive,
   generatedAt,
   totalCount,
   emptyContent,
@@ -132,6 +134,7 @@ export function ListPanel({
               listing={listing}
               selected={listing.id === selectedId}
               onSelect={onSelect}
+              onArchive={onArchive}
             />
           ))}
         </div>

@@ -17,6 +17,7 @@ type MobileListProps = {
   stage: AtlasStageValue;
   onStageChange: (stage: AtlasStageValue) => void;
   onSelect: (id: string) => void;
+  onArchive?: (id: string) => void;
   onScan: () => void;
   scanning: boolean;
   onOpenFilters: () => void;
@@ -96,6 +97,7 @@ export function MobileList({
   stage,
   onStageChange,
   onSelect,
+  onArchive,
   onScan,
   scanning,
   onOpenFilters,
@@ -206,9 +208,10 @@ export function MobileList({
 
       <GlassPill
         as="button"
-        padding="10px 12px"
+        padding="10px 14px"
         onClick={onScan}
-        aria-label={scanning ? 'Scan en cours' : 'Lancer un scan'}
+        aria-label={scanning ? 'Scan en cours, voir le détail' : 'Lancer un scan'}
+        style={{ gap: 8 }}
       >
         <span
           style={{
@@ -217,9 +220,20 @@ export function MobileList({
             borderRadius: 999,
             background: scanning ? 'var(--atlas-ember)' : 'var(--atlas-good)',
             animation: scanning ? 'v2pulse 1.4s ease-in-out infinite' : undefined,
-            display: 'inline-block'
+            display: 'inline-block',
+            flex: '0 0 auto'
           }}
         />
+        <span
+          style={{
+            fontSize: 12.5,
+            fontWeight: 500,
+            color: 'var(--atlas-ink)',
+            fontFamily: 'var(--atlas-sans)'
+          }}
+        >
+          {scanning ? 'Scan…' : 'Scanner'}
+        </span>
       </GlassPill>
     </div>
   );
@@ -319,7 +333,12 @@ export function MobileList({
             </div>
           ) : (
             listings.map((listing) => (
-              <MobileListRow key={listing.id} listing={listing} onSelect={onSelect} />
+              <MobileListRow
+                key={listing.id}
+                listing={listing}
+                onSelect={onSelect}
+                onArchive={onArchive}
+              />
             ))
           )}
         </div>

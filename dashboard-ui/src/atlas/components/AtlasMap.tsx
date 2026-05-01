@@ -17,6 +17,7 @@ import maplibregl, {
   type StyleSpecification
 } from 'maplibre-gl';
 import { formatCHF } from './Mono';
+import type { RouteOverlay } from '../types';
 
 export type AtlasMapPin = {
   id: string;
@@ -45,6 +46,7 @@ type AtlasMapProps = {
   mode?: 'warm' | 'cool';
   style?: CSSProperties;
   className?: string;
+  routeOverlay?: RouteOverlay | null;
 };
 
 // CARTO Positron — clean, warm-leaning light raster basemap that matches the
@@ -233,6 +235,28 @@ function ClusterPin({
   );
 }
 
+function LegBadge({ label, color }: { label: string; color: string }) {
+  return (
+    <div
+      style={{
+        background: color,
+        color: '#fff',
+        padding: '2px 7px',
+        borderRadius: 999,
+        fontSize: 10.5,
+        fontWeight: 700,
+        letterSpacing: '-0.005em',
+        boxShadow: '0 4px 10px rgba(0,0,0,.18), 0 0 0 1.5px #fff',
+        fontFamily: 'var(--atlas-mono)',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap'
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
 function WorkplacePill({ label }: { label: string }) {
   return (
     <div
@@ -380,7 +404,8 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     initialCenter,
     mode = 'warm',
     style,
-    className
+    className,
+    routeOverlay
   },
   ref
 ) {
@@ -388,6 +413,8 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<string, ManagedMarker>>(new Map());
   const workplaceMarkerRef = useRef<{ marker: Marker; el: HTMLDivElement } | null>(null);
+  const routeBadgeMarkersRef = useRef<Array<{ marker: Marker; el: HTMLDivElement; label: string; color: string }>>([]);
+  const routeLayersAddedRef = useRef(false);
   const lastBoundsKeyRef = useRef<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [renderTick, setRenderTick] = useState(0);
@@ -546,6 +573,170 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
     }
   }, [showWorkplace, workplace?.lat, workplace?.lon, loaded]);
 
+  // Route overlay: draw GeoJSON LineString layers + leg-label badges. The
+  // source data is rebuilt per overlay; clearing the prop removes all layers.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !loaded) return;
+
+    const SOURCE_ID = 'commute-route';
+    const WALK_LAYER = 'commute-route-walk';
+    const TRANSIT_LAYER = 'commute-route-transit';
+    const STOPS_LAYER = 'commute-route-stops';
+
+    const removeLayers = () => {
+      for (const id of [WALK_LAYER, TRANSIT_LAYER, STOPS_LAYER]) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      if (map.getSource(SOURCE_ID)) map.removeSource(SOURCE_ID);
+      routeLayersAddedRef.current = false;
+      for (const m of routeBadgeMarkersRef.current) m.marker.remove();
+      routeBadgeMarkersRef.current = [];
+      setRenderTick((n) => n + 1);
+    };
+
+    if (!routeOverlay || routeOverlay.legs.length === 0) {
+      removeLayers();
+      return;
+    }
+
+    type RouteFeature = GeoJSON.Feature<GeoJSON.LineString, { kind: 'walk' | 'transit'; color: string; failed: boolean }>;
+    type StopFeature = GeoJSON.Feature<GeoJSON.Point, { color: string }>;
+    const lineFeatures: RouteFeature[] = [];
+    const stopFeatures: StopFeature[] = [];
+
+    for (const leg of routeOverlay.legs) {
+      if (leg.coords.length < 2) continue;
+      lineFeatures.push({
+        type: 'Feature',
+        properties: { kind: leg.kind, color: leg.color, failed: leg.failed },
+        geometry: { type: 'LineString', coordinates: leg.coords as [number, number][] }
+      });
+      stopFeatures.push({
+        type: 'Feature',
+        properties: { color: leg.color },
+        geometry: { type: 'Point', coordinates: leg.coords[0] as [number, number] }
+      });
+    }
+    // Final stop (arrival of last leg).
+    const lastLeg = routeOverlay.legs[routeOverlay.legs.length - 1];
+    if (lastLeg && lastLeg.coords.length > 0) {
+      stopFeatures.push({
+        type: 'Feature',
+        properties: { color: lastLeg.color },
+        geometry: { type: 'Point', coordinates: lastLeg.coords[lastLeg.coords.length - 1] as [number, number] }
+      });
+    }
+
+    const lineFc: GeoJSON.FeatureCollection<GeoJSON.LineString> = { type: 'FeatureCollection', features: lineFeatures };
+    const stopFc: GeoJSON.FeatureCollection<GeoJSON.Point> = { type: 'FeatureCollection', features: stopFeatures };
+
+    const apply = () => {
+      const existing = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (existing) {
+        // Combine line + stop features into a single source — easier to manage
+        // and we filter by geometry-type in each layer.
+        existing.setData({
+          type: 'FeatureCollection',
+          features: [...lineFeatures, ...stopFeatures]
+        });
+      } else {
+        map.addSource(SOURCE_ID, {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [...lineFeatures, ...stopFeatures] }
+        });
+      }
+
+      if (!map.getLayer(WALK_LAYER)) {
+        map.addLayer({
+          id: WALK_LAYER,
+          type: 'line',
+          source: SOURCE_ID,
+          filter: ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'kind'], 'walk']],
+          paint: {
+            'line-color': ['get', 'color'],
+            'line-width': 3,
+            'line-dasharray': [2, 2],
+            'line-opacity': 0.95
+          }
+        });
+      }
+      if (!map.getLayer(TRANSIT_LAYER)) {
+        map.addLayer({
+          id: TRANSIT_LAYER,
+          type: 'line',
+          source: SOURCE_ID,
+          filter: ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'kind'], 'transit']],
+          paint: {
+            'line-color': ['get', 'color'],
+            'line-width': 4.5,
+            'line-opacity': 0.95
+          },
+          layout: { 'line-cap': 'round', 'line-join': 'round' }
+        });
+      }
+      if (!map.getLayer(STOPS_LAYER)) {
+        map.addLayer({
+          id: STOPS_LAYER,
+          type: 'circle',
+          source: SOURCE_ID,
+          filter: ['==', ['geometry-type'], 'Point'],
+          paint: {
+            'circle-radius': 4.5,
+            'circle-color': '#ffffff',
+            'circle-stroke-color': ['get', 'color'],
+            'circle-stroke-width': 2
+          }
+        });
+      }
+      routeLayersAddedRef.current = true;
+
+      // Sync per-leg badge markers (one at the start of each transit leg, plus
+      // first walk if the route starts with a walk).
+      for (const m of routeBadgeMarkersRef.current) m.marker.remove();
+      routeBadgeMarkersRef.current = [];
+      for (let i = 0; i < routeOverlay.legs.length; i++) {
+        const leg = routeOverlay.legs[i];
+        if (leg.coords.length === 0) continue;
+        // Show transit labels always; skip walk labels except at index 0.
+        if (leg.kind === 'walk' && i !== 0) continue;
+        const startIdx = Math.floor(leg.coords.length / 2);
+        const [lng, lat] = leg.coords[startIdx];
+        const el = document.createElement('div');
+        el.className = 'atlas-map-marker';
+        el.style.pointerEvents = 'none';
+        const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([lng, lat])
+          .addTo(map);
+        routeBadgeMarkersRef.current.push({ marker, el, label: leg.label, color: leg.color });
+      }
+
+      // Fit bounds to the route, padding for the right-side detail panel.
+      const [[w, s], [e, n]] = routeOverlay.bounds;
+      if (Number.isFinite(w) && Number.isFinite(s) && Number.isFinite(e) && Number.isFinite(n)) {
+        const bounds = new LngLatBounds([w, s], [e, n]);
+        const isWide = (map.getContainer().clientWidth || 0) >= 1024;
+        map.fitBounds(bounds, {
+          padding: isWide
+            ? { top: 96, right: 432, bottom: 96, left: 432 }
+            : { top: 80, right: 32, bottom: 220, left: 32 },
+          maxZoom: 15,
+          duration: 600
+        });
+      }
+      setRenderTick((n) => n + 1);
+    };
+
+    if (map.isStyleLoaded()) apply();
+    else map.once('load', apply);
+
+    return () => {
+      // Don't remove on unmount-of-effect when the overlay is still set;
+      // removal is handled by the next overlay change or null. But if the
+      // component is unmounting entirely the map cleanup effect handles it.
+    };
+  }, [routeOverlay, loaded]);
+
   // Auto-fit the viewport to the visible pins (+ workplace) whenever the pin
   // set changes geographically. Without this the map kept its initial center
   // and pins would land outside the viewport.
@@ -678,6 +869,11 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
         )
       );
     }
+    routeBadgeMarkersRef.current.forEach((m, i) => {
+      items.push(
+        createPortal(<LegBadge label={m.label} color={m.color} />, m.el, `route-badge-${i}`)
+      );
+    });
     return items;
     // renderTick fires after marker sync so the portal map sees freshly-created
     // marker elements; markersRef is mutable so we can't depend on it directly.

@@ -2,8 +2,47 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { cancelProfileScan, getProfileScanStatus, startProfileScan } from '../api/listings';
 import type { ScanJob } from '../api/schemas';
+import type { AtlasListingSource, AtlasProfile } from './types';
 
 const STORAGE_KEY = 'atlas-scan-job';
+
+export const ALL_SOURCES: AtlasListingSource[] = [
+  'immobilier.ch',
+  'flatfox.ch',
+  'naef.ch',
+  'bernard-nicod',
+  'Retraites Populaires',
+  'anibis.ch'
+];
+
+export type ScanSourceState = 'done' | 'running' | 'queued' | 'error';
+
+export type ScanSourceRow = {
+  name: string;
+  state: ScanSourceState;
+  newCount?: number;
+};
+
+export function buildScanSources(
+  profile: AtlasProfile,
+  scan: ScanJob | null
+): { total: number; done: number; sources: ScanSourceRow[] } {
+  const enabled = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
+  const total = enabled.length || ALL_SOURCES.length;
+  const done = scan?.done ?? 0;
+  const running = scan?.currentStep ?? null;
+  return {
+    total,
+    done,
+    sources: enabled.map<ScanSourceRow>((name, idx) => {
+      if (idx < done) return { name, state: 'done' };
+      if (running && running.toLowerCase().includes(name.split('.')[0].toLowerCase()))
+        return { name, state: 'running' };
+      if (idx === done) return { name, state: 'running' };
+      return { name, state: 'queued' };
+    })
+  };
+}
 
 type StoredScan = { jobId: string };
 

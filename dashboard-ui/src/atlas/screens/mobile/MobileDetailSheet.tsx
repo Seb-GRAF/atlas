@@ -9,8 +9,7 @@ import {
   PhotoFrame,
   SourceMono,
   StatusPill,
-  formatCHF,
-  useLightbox
+  formatCHF
 } from '../../components';
 import { StatGrid } from '../StatGrid';
 import { CommuteTimeline } from '../CommuteTimeline';
@@ -24,6 +23,9 @@ type MobileDetailSheetProps = {
   onStatusChange: (id: string, status: AtlasListingStatus) => void;
   onNotesChange: (id: string, notes: string) => void;
   onDismiss: (id: string) => void;
+  onVisualizeRoute?: () => void;
+  routeVisualizing?: boolean;
+  routeLoading?: boolean;
 };
 
 const STATUS_OPTIONS: { value: AtlasListingStatus; label: string }[] = [
@@ -47,13 +49,15 @@ export function MobileDetailSheet({
   onTogglePin,
   onStatusChange,
   onNotesChange,
-  onDismiss
+  onDismiss,
+  onVisualizeRoute,
+  routeVisualizing,
+  routeLoading
 }: MobileDetailSheetProps) {
   const [draftNotes, setDraftNotes] = useState(listing?.notes ?? '');
   // Keep last non-null listing so the sheet can finish its close animation
   // after the parent clears `listing`.
   const [shown, setShown] = useState<AtlasListing | null>(listing);
-  const openLightbox = useLightbox();
 
   useEffect(() => {
     setDraftNotes(listing?.notes ?? '');
@@ -70,20 +74,11 @@ export function MobileDetailSheet({
     ? view.status
     : 'À trier';
 
-  const guardLightbox = (event: Event) => {
-    const lb = document.querySelector('.lg-container.lg-show');
-    if (lb && event.target instanceof Node && lb.contains(event.target)) {
-      event.preventDefault();
-    }
-  };
-
   return (
     <MobileBottomSheet
       open={open}
       onClose={onClose}
       title={view.title}
-      onPointerDownOutside={guardLightbox}
-      onInteractOutside={guardLightbox}
     >
       <div
         style={{
@@ -101,35 +96,12 @@ export function MobileDetailSheet({
           gap: 14
         }}
       >
-        <div style={{ position: 'relative' }}>
+        <div style={{ flexShrink: 0 }}>
           <PhotoFrame
             images={view.images}
             aspect="4 / 3"
             radius={16}
-            onOpen={(images, index) => openLightbox(images, index)}
           />
-          <button
-            type="button"
-            onClick={() => onTogglePin(view.id)}
-            aria-label={view.pinned ? 'Désépingler' : 'Épingler'}
-            style={{
-              position: 'absolute',
-              top: 10,
-              right: 10,
-              width: 36,
-              height: 36,
-              borderRadius: 999,
-              border: 0,
-              background: 'rgba(255,255,255,.92)',
-              boxShadow: '0 4px 12px rgba(0,0,0,.16)',
-              cursor: 'pointer',
-              color: view.pinned ? 'var(--atlas-ember)' : 'var(--atlas-ink-2)',
-              display: 'grid',
-              placeItems: 'center'
-            }}
-          >
-            <Icons.Heart size={16} stroke={1.7} />
-          </button>
         </div>
 
         <div
@@ -169,19 +141,48 @@ export function MobileDetailSheet({
               {view.address || '—'}
             </div>
           </div>
-          {view.totalChf != null ? (
-            <Mono
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              flexShrink: 0
+            }}
+          >
+            {view.totalChf != null ? (
+              <Mono
+                style={{
+                  fontSize: 22,
+                  fontWeight: 500,
+                  letterSpacing: '-0.015em',
+                  whiteSpace: 'nowrap',
+                  color: 'var(--atlas-ink)'
+                }}
+              >
+                {formatCHF(view.totalChf)}
+                <span style={{ fontSize: 12, color: 'var(--atlas-ink-3)', marginLeft: 4 }}>CHF</span>
+              </Mono>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onTogglePin(view.id)}
+              aria-label={view.pinned ? 'Désépingler' : 'Épingler'}
               style={{
-                fontSize: 22,
-                fontWeight: 500,
-                letterSpacing: '-0.015em',
-                whiteSpace: 'nowrap',
-                color: 'var(--atlas-ink)'
+                width: 32,
+                height: 32,
+                borderRadius: 999,
+                border: 0,
+                background: 'transparent',
+                cursor: 'pointer',
+                color: view.pinned ? 'var(--atlas-ember)' : 'var(--atlas-ink-3)',
+                display: 'grid',
+                placeItems: 'center',
+                padding: 0
               }}
             >
-              {formatCHF(view.totalChf)}
-            </Mono>
-          ) : null}
+              <Icons.Heart size={18} stroke={1.7} />
+            </button>
+          </div>
         </div>
 
         <StatGrid
@@ -190,7 +191,12 @@ export function MobileDetailSheet({
           driveText={view.driveText}
         />
 
-        <CommuteTimeline listing={view} />
+        <CommuteTimeline
+          listing={view}
+          onVisualize={onVisualizeRoute}
+          visualizing={routeVisualizing}
+          visualizingLoading={routeLoading}
+        />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <SourceMono source={view.source} />

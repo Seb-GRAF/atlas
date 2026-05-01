@@ -262,4 +262,66 @@ describe('/api/state map precision', () => {
     expect(state.map.listingsWithCoordinates).toBe(1);
     expect(state.map.listingsMissingCoordinates).toBe(0);
   });
+
+  it('refreshes stale broad-region cached coordinates instead of rendering them', async () => {
+    await fs.rm(profileDir, { recursive: true, force: true });
+    await fs.mkdir(profileDir, { recursive: true });
+    await fs.writeFile(
+      path.join(profileDir, 'watch-config.json'),
+      JSON.stringify({ areas: [{ label: 'Bussigny' }], preferences: {} }, null, 2)
+    );
+    await fs.writeFile(
+      path.join(profileDir, 'tracker.json'),
+      JSON.stringify(
+        {
+          listings: [
+            {
+              id: 'stale-street',
+              address: 'Bussigny, chemin de la sauge',
+              area: 'Bussigny',
+              status: 'À trier',
+              display: true
+            }
+          ],
+          statuses: [],
+          statusWorkflowVersion: 2
+        },
+        null,
+        2
+      )
+    );
+    await fs.writeFile(path.join(profileDir, 'latest-listings.json'), JSON.stringify({ all: [], matching: [], newListings: [] }, null, 2));
+    await fs.writeFile(
+      path.join(profileDir, 'geocode-cache.json'),
+      JSON.stringify(
+        {
+          'bussigny, chemin de la sauge, suisse': {
+            lat: 47.0986213684082,
+            lon: 7.954939365386963
+          }
+        },
+        null,
+        2
+      )
+    );
+    geoServer = await startGeoStub({ lat: 46.553367614746094, lon: 6.556458473205566 });
+
+    const port = await getFreePort();
+    await startServer(port, { GEO_ADMIN_SEARCH_URL: geoServer.url });
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/state?profile=${profile}`);
+    const state = await response.json();
+    const listing = state.tracker.listings[0];
+
+    expect(response.status).toBe(200);
+    expect(geoServer.requests).toEqual(['chemin de la sauge, Bussigny']);
+    expect(listing.mapLocation).toMatchObject({
+      lat: 46.553367614746094,
+      lon: 6.556458473205566,
+      precision: 'address',
+      query: 'Bussigny, chemin de la sauge, Suisse'
+    });
+    expect(state.map.listingsWithCoordinates).toBe(1);
+    expect(state.map.listingsMissingCoordinates).toBe(0);
+  });
 });

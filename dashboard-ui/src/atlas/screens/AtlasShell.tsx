@@ -3,7 +3,7 @@ import { AtlasMap, type AtlasMapHandle, type AtlasMapPin, MapControls } from '..
 import { useAtlasMutations, useAtlasState } from '../data/hooks';
 import { listStages, matchesStage, sortListings } from '../data/adapt';
 import { useAtlasUrlState } from '../url';
-import { useScan } from '../scan';
+import { ALL_SOURCES, buildScanSources, useScan } from '../scan';
 import { useAtlasKeyboard } from '../keyboard';
 import { TopBar } from './TopBar';
 import { ListPanel } from './ListPanel';
@@ -12,21 +12,15 @@ import { EmptyListPanel } from './EmptyListPanel';
 import { ScanProgressCard } from './ScanProgressCard';
 import { SettingsDrawer, SettingsScrim } from './SettingsDrawer';
 import { ListSkeleton } from './Skeletons';
+import { UndoToast } from './UndoToast';
+import { usePendingDismissals } from './usePendingDismissals';
 import { MobileShell } from './mobile/MobileShell';
-import type { AtlasListing, AtlasListingSource, AtlasListingStatus, AtlasProfile } from '../types';
+import type { AtlasListing, AtlasListingStatus, AtlasProfile, RouteOverlay } from '../types';
 import type { ScanJob } from '../../api/schemas';
+import { buildTransitRouteOverlay } from '../data/routeViz';
 
 const VEVEY_FALLBACK = { lat: 46.47, lon: 6.84, zoom: 11 };
 const MOBILE_BREAKPOINT = 768;
-
-const ALL_SOURCES: AtlasListingSource[] = [
-  'immobilier.ch',
-  'flatfox.ch',
-  'naef.ch',
-  'bernard-nicod',
-  'Retraites Populaires',
-  'anibis.ch'
-];
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(
@@ -42,24 +36,6 @@ function useIsMobile() {
   return isMobile;
 }
 
-function buildScanSources(profile: AtlasProfile, scan: ScanJob | null) {
-  const enabled = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
-  const total = enabled.length || ALL_SOURCES.length;
-  const done = scan?.done ?? 0;
-  const running = scan?.currentStep ?? null;
-  return {
-    total,
-    done,
-    sources: enabled.map<{ name: string; state: 'done' | 'running' | 'queued' | 'error' }>((name, idx) => {
-      if (idx < done) return { name, state: 'done' };
-      if (running && running.toLowerCase().includes(name.split('.')[0].toLowerCase()))
-        return { name, state: 'running' };
-      if (idx === done) return { name, state: 'running' };
-      return { name, state: 'queued' };
-    })
-  };
-}
-
 export function AtlasShell() {
   const isMobile = useIsMobile();
   if (isMobile) return <MobileShell />;
@@ -73,18 +49,82 @@ function DesktopShell() {
   const { scan, start: startScan, cancel: cancelScan } = useScan();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const mapHandle = useRef<AtlasMapHandle>(null);
+  const [routeOverlay, setRouteOverlay] = useState<RouteOverlay | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
 
-  const stages = useMemo(() => listStages(listings), [listings]);
+  const dismissCallback = useCallback((id: string) => dismiss.mutate(id), [dismiss]);
+  const { pendingIds, pendingCount, schedule: schedulePending, undoAll: undoPending } =
+    usePendingDismissals(dismissCallback);
+
+  const visibleListings = useMemo(
+    () => (pendingIds.size === 0 ? listings : listings.filter((l) => !pendingIds.has(l.id))),
+    [listings, pendingIds]
+  );
+
+  const stages = useMemo(() => listStages(visibleListings), [visibleListings]);
 
   const filtered = useMemo(
-    () => sortListings(listings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
-    [listings, urlState.stage, urlState.sort]
+    () => sortListings(visibleListings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
+    [visibleListings, urlState.stage, urlState.sort]
+  );
+
+  const handleArchive = useCallback(
+    (id: string) => {
+      // If the archived listing is currently selected, advance selection to next/prev.
+      if (urlState.listing === id) {
+        const idx = filtered.findIndex((l) => l.id === id);
+        const next = idx >= 0 ? filtered[idx + 1] ?? filtered[idx - 1] ?? null : null;
+        updateUrl({ listing: next ? next.id : null });
+      }
+      schedulePending(id);
+    },
+    [filtered, schedulePending, updateUrl, urlState.listing]
   );
 
   const selected: AtlasListing | null = useMemo(
     () => listings.find((l) => l.id === urlState.listing) ?? null,
     [listings, urlState.listing]
   );
+
+  // Clear the route overlay when the user switches to a different listing or
+  // deselects. The overlay is bound to a specific listing id.
+  useEffect(() => {
+    if (!selected || (routeOverlay && routeOverlay.listingId !== selected.id)) {
+      setRouteOverlay(null);
+      setRouteLoading(false);
+      setRouteError(null);
+    }
+  }, [selected, routeOverlay]);
+
+  const handleVisualizeRoute = useCallback(async () => {
+    if (!selected) return;
+    if (routeOverlay && routeOverlay.listingId === selected.id) {
+      setRouteOverlay(null);
+      setRouteError(null);
+      return;
+    }
+    if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
+    setRouteLoading(true);
+    setRouteError(null);
+    try {
+      const overlay = await buildTransitRouteOverlay(
+        selected.id,
+        selected.transitRoute,
+        selected.lat != null && selected.lon != null
+          ? { lat: selected.lat, lon: selected.lon }
+          : null
+      );
+      setRouteOverlay(overlay);
+      if (overlay.failedCount > 0) {
+        setRouteError(`${overlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`);
+      }
+    } catch (err) {
+      setRouteError(`Impossible de tracer le trajet: ${(err as Error).message}`);
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [selected, routeOverlay]);
 
   // Keep the detail panel mounted long enough to play its exit animation.
   const detailVisible = !!selected && !settingsOpen;
@@ -192,6 +232,7 @@ function DesktopShell() {
           workplaceLabel={profile.workplace ? `Travail · ${profile.workplace}` : 'Travail'}
           workplace={profile.workplaceCoords ?? undefined}
           initialCenter={initialCenter}
+          routeOverlay={routeOverlay}
         />
       </div>
 
@@ -215,6 +256,7 @@ function DesktopShell() {
         listings={showEmpty || showStageEmpty || isLoading ? [] : filtered}
         selectedId={urlState.listing}
         onSelect={(id) => updateUrl({ listing: id })}
+        onArchive={handleArchive}
         generatedAt={profile.generatedAt}
         totalCount={isLoading ? undefined : filtered.length}
         emptyContent={
@@ -247,10 +289,37 @@ function DesktopShell() {
           }
           onNotesChange={(id, notes) => setStatus.mutate({ id, status: detailRender.status, notes })}
           onDismiss={(id) => {
+            const idx = filtered.findIndex((l) => l.id === id);
+            const nextListing =
+              idx >= 0 ? filtered[idx + 1] ?? filtered[idx - 1] ?? null : null;
             dismiss.mutate(id);
-            updateUrl({ listing: null });
+            updateUrl({ listing: nextListing ? nextListing.id : null });
           }}
+          onVisualizeRoute={handleVisualizeRoute}
+          routeVisualizing={!!routeOverlay && routeOverlay.listingId === detailRender.id}
+          routeLoading={routeLoading}
         />
+      ) : null}
+
+      {routeError ? (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 24,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'var(--atlas-paper)',
+            boxShadow: 'var(--atlas-shadow-2), 0 0 0 1px var(--atlas-line)',
+            padding: '8px 14px',
+            borderRadius: 999,
+            fontSize: 12,
+            color: 'var(--atlas-ink-2)',
+            zIndex: 5,
+            maxWidth: 480
+          }}
+        >
+          {routeError}
+        </div>
       ) : null}
 
       <MapControls
@@ -282,6 +351,10 @@ function DesktopShell() {
             }}
           />
         </>
+      ) : null}
+
+      {pendingCount > 0 ? (
+        <UndoToast count={pendingCount} onUndo={undoPending} bottomOffset={24} />
       ) : null}
 
       {isLoading ? <LoadingIndicator /> : null}

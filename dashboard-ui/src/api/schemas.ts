@@ -81,7 +81,8 @@ const CommuteLegSchema = z.object({
   to: z.string(),
   departureAt: z.string().nullable(),
   arrivalAt: z.string().nullable(),
-  minutes: z.number().nullable()
+  minutes: z.number().nullable(),
+  coords: z.array(z.tuple([z.number(), z.number()])).optional()
 });
 
 const TransitRouteSchema = z.object({

@@ -11,8 +11,7 @@ import {
   PhotoFrame,
   SourceMono,
   StatusPill,
-  formatCHF,
-  useLightbox
+  formatCHF
 } from '../components';
 import { StatGrid } from './StatGrid';
 import { CommuteTimeline } from './CommuteTimeline';
@@ -26,6 +25,9 @@ type DetailPanelProps = {
   onStatusChange: (id: string, next: AtlasListingStatus) => void;
   onNotesChange: (id: string, next: string) => void;
   onDismiss: (id: string) => void;
+  onVisualizeRoute?: () => void;
+  routeVisualizing?: boolean;
+  routeLoading?: boolean;
 };
 
 export const PANEL_ANIM_MS = 260;
@@ -65,10 +67,12 @@ export function DetailPanel({
   onTogglePin,
   onStatusChange,
   onNotesChange,
-  onDismiss
+  onDismiss,
+  onVisualizeRoute,
+  routeVisualizing,
+  routeLoading
 }: DetailPanelProps) {
   const [draftNotes, setDraftNotes] = useState(listing?.notes ?? '');
-  const openLightbox = useLightbox();
   useEffect(() => {
     setDraftNotes(listing?.notes ?? '');
   }, [listing?.id, listing?.notes]);
@@ -103,7 +107,6 @@ export function DetailPanel({
             images={listing.images}
             aspect="4 / 3"
             radius={14}
-            onOpen={(images, index) => openLightbox(images, index)}
           />
           <button
             type="button"
@@ -144,6 +147,7 @@ export function DetailPanel({
             {listing.totalChf != null ? (
               <Mono style={{ fontSize: 24, fontWeight: 500, color: 'var(--atlas-ink)' }}>
                 {formatCHF(listing.totalChf)}
+                <span style={{ fontSize: 12, color: 'var(--atlas-ink-3)', marginLeft: 4 }}>CHF</span>
               </Mono>
             ) : null}
           </div>
@@ -162,13 +166,27 @@ export function DetailPanel({
           <div style={{ fontSize: 12.5, color: 'var(--atlas-ink-3)' }}>{listing.address || '—'}</div>
         </div>
 
+        <AtlasButton
+          variant="secondary"
+          onClick={() => listing.url && window.open(listing.url, '_blank', 'noopener')}
+          disabled={!listing.url}
+          leftSection={<Icons.External size={14} stroke={1.8} />}
+        >
+          Ouvrir l'annonce
+        </AtlasButton>
+
         <StatGrid
           rooms={listing.rooms}
           surfaceM2={listing.surfaceM2}
           driveText={listing.driveText}
         />
 
-        <CommuteTimeline listing={listing} />
+        <CommuteTimeline
+          listing={listing}
+          onVisualize={onVisualizeRoute}
+          visualizing={routeVisualizing}
+          visualizingLoading={routeLoading}
+        />
 
         <Hairline />
 
@@ -197,23 +215,13 @@ export function DetailPanel({
           placeholder="Notes — prochains pas, contact…"
         />
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-          <AtlasButton
-            variant="primary"
-            onClick={() => listing.url && window.open(listing.url, '_blank', 'noopener')}
-            disabled={!listing.url}
-            leftSection={<Icons.External size={14} stroke={1.8} />}
-          >
-            Ouvrir l'annonce
-          </AtlasButton>
-          <AtlasButton
-            variant="secondary"
-            onClick={() => onDismiss(listing.id)}
-            leftSection={<Icons.Close size={14} stroke={1.8} />}
-          >
-            Écarter
-          </AtlasButton>
-        </div>
+        <AtlasButton
+          variant="danger"
+          onClick={() => onDismiss(listing.id)}
+          leftSection={<Icons.Close size={14} stroke={1.8} />}
+        >
+          Écarter
+        </AtlasButton>
 
         <div
           style={{

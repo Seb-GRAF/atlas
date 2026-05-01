@@ -174,7 +174,7 @@ export function PhotoFrame({
           style={{
             position: 'absolute',
             top: 8,
-            right: 8,
+            left: 8,
             padding: '3px 8px',
             borderRadius: 999,
             background: 'rgba(22,20,15,.55)',

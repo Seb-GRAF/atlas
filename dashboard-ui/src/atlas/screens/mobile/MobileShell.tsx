@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useAtlasMutations, useAtlasState } from '../../data/hooks';
 import { listStages, matchesStage, sortListings } from '../../data/adapt';
 import { useAtlasUrlState } from '../../url';
 import { useScan } from '../../scan';
-import type { AtlasListing, AtlasListingStatus } from '../../types';
+import type { AtlasListing, AtlasListingStatus, RouteOverlay } from '../../types';
+import { buildTransitRouteOverlay } from '../../data/routeViz';
 import { MobileList } from './MobileList';
 import { MobileMap } from './MobileMap';
 import { MobileDetailSheet } from './MobileDetailSheet';
+import { MobileScanSheet } from './MobileScanSheet';
 import { MobileTabBar, type MobileTab } from './MobileTabBar';
 import { FiltersSheet } from './FiltersSheet';
+import { UndoToast } from '../UndoToast';
+import { usePendingDismissals } from '../usePendingDismissals';
 
 type Mode = 'list' | 'map' | 'detail';
 
@@ -25,28 +29,86 @@ export function MobileShell() {
   const { listings, profile, isLoading, error } = useAtlasState();
   const { setStatus, togglePin, dismiss, saveProfile } = useAtlasMutations();
   const [urlState, updateUrl] = useAtlasUrlState();
-  const { scan, start: startScan } = useScan();
+  const { scan, jobId, start: startScan, cancel: cancelScan } = useScan();
 
   const [mode, setMode] = useState<Mode>(urlState.listing ? 'detail' : 'list');
   // Tracks the screen behind the sheet so the user returns to it on close.
   const [priorMode, setPriorMode] = useState<'list' | 'map'>('list');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Sheet visibility is decoupled from URL selection: a user may keep a
+  // listing selected (so the route overlay stays drawn on the map) while
+  // closing the bottom sheet to actually see the map.
+  const [sheetOpen, setSheetOpen] = useState(!!urlState.listing);
+  const [routeOverlay, setRouteOverlay] = useState<RouteOverlay | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [scanSheetOpen, setScanSheetOpen] = useState(false);
+  // Tracks the last scan job we auto-opened the sheet for. Without this, the
+  // 2s status poll would re-open the sheet right after the user dismissed it.
+  const lastShownJobIdRef = useRef<string | null>(null);
+  const autoCloseTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+    if (scan?.status !== 'running') return;
+    if (lastShownJobIdRef.current === jobId) return;
+    // Don't steal focus from an open detail sheet — the labeled pill keeps
+    // the user aware; they can open the scan sheet manually after.
+    if (sheetOpen) return;
+    lastShownJobIdRef.current = jobId;
+    setScanSheetOpen(true);
+  }, [jobId, scan?.status, sheetOpen]);
+
+  useEffect(() => {
+    if (scan?.status !== 'done' || !scanSheetOpen) return;
+    autoCloseTimerRef.current = window.setTimeout(() => {
+      setScanSheetOpen(false);
+    }, 4000);
+    return () => {
+      if (autoCloseTimerRef.current != null) {
+        window.clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
+    };
+  }, [scan?.status, scanSheetOpen]);
+
+  const scanRunning = !!scan && scan.status === 'running';
+  const handleScanClick = useCallback(() => {
+    if (scanRunning) {
+      setScanSheetOpen(true);
+    } else {
+      startScan();
+    }
+  }, [scanRunning, startScan]);
+  const handleScanCancel = useCallback(async () => {
+    await cancelScan();
+    setScanSheetOpen(false);
+  }, [cancelScan]);
 
   // Sync mode when URL listing param changes externally (e.g. back/forward).
   useEffect(() => {
     if (urlState.listing) {
-      setMode('detail');
+      setMode(sheetOpen ? 'detail' : priorMode);
     } else {
       setMode((current) => (current === 'detail' ? priorMode : current));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlState.listing]);
+  }, [urlState.listing, sheetOpen]);
 
-  const stages = useMemo(() => listStages(listings), [listings]);
+  const dismissCallback = useCallback((id: string) => dismiss.mutate(id), [dismiss]);
+  const { pendingIds, pendingCount, schedule: schedulePending, undoAll: undoPending } =
+    usePendingDismissals(dismissCallback);
+
+  const visibleListings = useMemo(
+    () => (pendingIds.size === 0 ? listings : listings.filter((l) => !pendingIds.has(l.id))),
+    [listings, pendingIds]
+  );
+
+  const stages = useMemo(() => listStages(visibleListings), [visibleListings]);
 
   const filtered = useMemo(
-    () => sortListings(listings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
-    [listings, urlState.stage, urlState.sort]
+    () => sortListings(visibleListings.filter((l) => matchesStage(l, urlState.stage)), urlState.sort),
+    [visibleListings, urlState.stage, urlState.sort]
   );
 
   const selected: AtlasListing | null = useMemo(
@@ -54,24 +116,113 @@ export function MobileShell() {
     [listings, urlState.listing]
   );
 
+  // Drop the route when the user switches to a different listing or
+  // deselects entirely. Mirrors desktop behavior.
+  useEffect(() => {
+    if (!selected || (routeOverlay && routeOverlay.listingId !== selected.id)) {
+      setRouteOverlay(null);
+      setRouteLoading(false);
+      setRouteError(null);
+    }
+  }, [selected, routeOverlay]);
+
+  const handleVisualizeRoute = useCallback(async () => {
+    if (!selected) return;
+    if (routeOverlay && routeOverlay.listingId === selected.id) {
+      setRouteOverlay(null);
+      setRouteError(null);
+      return;
+    }
+    if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
+    // Hide the sheet so the user can actually see the route on the map; the
+    // listing stays selected, the route stays drawn.
+    setSheetOpen(false);
+    setMode('map');
+    setRouteLoading(true);
+    setRouteError(null);
+    try {
+      const overlay = await buildTransitRouteOverlay(
+        selected.id,
+        selected.transitRoute,
+        selected.lat != null && selected.lon != null
+          ? { lat: selected.lat, lon: selected.lon }
+          : null
+      );
+      setRouteOverlay(overlay);
+      if (overlay.failedCount > 0) {
+        setRouteError(`${overlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`);
+      }
+    } catch (err) {
+      setRouteError(`Impossible de tracer le trajet: ${(err as Error).message}`);
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [selected, routeOverlay]);
+
   const handleSelect = (id: string) => {
     setPriorMode(mode === 'map' ? 'map' : 'list');
     updateUrl({ listing: id });
+    setSheetOpen(true);
     setMode('detail');
   };
 
-  const handleCloseDetail = () => {
-    updateUrl({ listing: null });
+  // The sheet's drag-to-dismiss only hides the sheet — when opened from the
+  // map, the listing stays selected so the route overlay remains drawn.
+  // When opened from the list, dismissing returns the user to the list.
+  const handleHideSheet = () => {
+    setSheetOpen(false);
+    if (priorMode === 'list') {
+      updateUrl({ listing: null });
+      setRouteOverlay(null);
+      setRouteError(null);
+    }
     setMode(priorMode);
   };
+
+  const handleFullClose = useCallback(() => {
+    updateUrl({ listing: null });
+    setSheetOpen(false);
+    setRouteOverlay(null);
+    setRouteError(null);
+    setMode(priorMode);
+  }, [updateUrl, priorMode]);
+
+  const handleReopenSheet = () => {
+    setSheetOpen(true);
+    setMode('detail');
+  };
+
+  const handleArchive = useCallback(
+    (id: string) => {
+      if (urlState.listing === id) {
+        const idx = filtered.findIndex((l) => l.id === id);
+        const next = idx >= 0 ? filtered[idx + 1] ?? filtered[idx - 1] ?? null : null;
+        if (next) {
+          updateUrl({ listing: next.id });
+          setRouteOverlay(null);
+          setRouteError(null);
+        } else {
+          handleFullClose();
+        }
+      }
+      schedulePending(id);
+    },
+    [filtered, schedulePending, updateUrl, urlState.listing, handleFullClose]
+  );
 
   const handleTabSelect = (tab: MobileTab) => {
     if (tab === 'list') {
       if (urlState.listing) updateUrl({ listing: null });
+      setSheetOpen(false);
+      setRouteOverlay(null);
+      setRouteError(null);
       setMode('list');
       setPriorMode('list');
     } else if (tab === 'map') {
       if (urlState.listing) updateUrl({ listing: null });
+      setSheetOpen(false);
+      setRouteOverlay(null);
+      setRouteError(null);
       setMode('map');
       setPriorMode('map');
     }
@@ -95,17 +246,19 @@ export function MobileShell() {
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
           onSelect={handleSelect}
           onOpenFilters={() => setFiltersOpen(true)}
+          routeOverlay={routeOverlay}
         />
       ) : (
         <MobileList
           profile={profile}
           listings={filtered}
+          onArchive={handleArchive}
           stages={stages}
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}
           onSelect={handleSelect}
-          onScan={() => startScan()}
-          scanning={!!scan && scan.status === 'running'}
+          onScan={handleScanClick}
+          scanning={scanRunning}
           onOpenFilters={() => setFiltersOpen(true)}
           sort={urlState.sort}
           onSortChange={(sort) => updateUrl({ sort })}
@@ -128,8 +281,8 @@ export function MobileShell() {
       />
 
       <MobileDetailSheet
-        listing={mode === 'detail' ? selected : null}
-        onClose={handleCloseDetail}
+        listing={mode === 'detail' && sheetOpen ? selected : null}
+        onClose={handleHideSheet}
         onTogglePin={(id) => togglePin.mutate(id)}
         onStatusChange={(id, status: AtlasListingStatus) => {
           if (!selected) return;
@@ -140,12 +293,40 @@ export function MobileShell() {
           setStatus.mutate({ id, status: selected.status, notes });
         }}
         onDismiss={(id) => {
+          const idx = filtered.findIndex((l) => l.id === id);
+          const nextListing =
+            idx >= 0 ? filtered[idx + 1] ?? filtered[idx - 1] ?? null : null;
           dismiss.mutate(id);
-          handleCloseDetail();
+          if (nextListing) {
+            updateUrl({ listing: nextListing.id });
+            setRouteOverlay(null);
+            setRouteError(null);
+          } else {
+            handleFullClose();
+          }
         }}
+        onVisualizeRoute={handleVisualizeRoute}
+        routeVisualizing={!!routeOverlay && !!selected && routeOverlay.listingId === selected.id}
+        routeLoading={routeLoading}
       />
 
-      {mode !== 'detail' ? (
+      <MobileScanSheet
+        open={scanSheetOpen}
+        onClose={() => setScanSheetOpen(false)}
+        scan={scan}
+        profile={profile}
+        onCancel={handleScanCancel}
+      />
+
+      {/* Floating pills shown when a listing is selected but the sheet is
+          hidden — lets the user reopen detail or fully clear selection. */}
+      {urlState.listing && !sheetOpen ? (
+        <SelectionPills onReopen={handleReopenSheet} onClose={handleFullClose} />
+      ) : null}
+
+      {routeError ? <RouteErrorToast message={routeError} /> : null}
+
+      {mode !== 'detail' && !urlState.listing ? (
         <MobileTabBar
           active={activeTab}
           onSelect={handleTabSelect}
@@ -153,11 +334,98 @@ export function MobileShell() {
         />
       ) : null}
 
+      {pendingCount > 0 ? (
+        <UndoToast count={pendingCount} onUndo={undoPending} bottomOffset={88} />
+      ) : null}
+
       {isLoading ? <LoadingIndicator /> : null}
       {error ? <ErrorBanner message={(error as Error).message} /> : null}
       {saveProfile.error ? (
         <ErrorBanner message={(saveProfile.error as Error).message} />
       ) : null}
+    </div>
+  );
+}
+
+function SelectionPills({ onReopen, onClose }: { onReopen: () => void; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: `calc(env(safe-area-inset-bottom, 16px) + 16px)`,
+        zIndex: 10,
+        display: 'flex',
+        justifyContent: 'center',
+        gap: 8,
+        padding: '0 12px',
+        pointerEvents: 'none'
+      }}
+    >
+      <button
+        type="button"
+        onClick={onReopen}
+        style={{
+          pointerEvents: 'auto',
+          background: 'var(--atlas-ink)',
+          color: '#fff',
+          border: 0,
+          padding: '10px 16px',
+          borderRadius: 999,
+          fontFamily: 'var(--atlas-sans)',
+          fontSize: 13,
+          fontWeight: 500,
+          letterSpacing: '-0.005em',
+          boxShadow: '0 8px 22px rgba(22,20,15,.28)',
+          cursor: 'pointer'
+        }}
+      >
+        Voir les détails
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Fermer"
+        style={{
+          pointerEvents: 'auto',
+          background: 'var(--atlas-paper)',
+          color: 'var(--atlas-ink)',
+          border: 0,
+          padding: '10px 14px',
+          borderRadius: 999,
+          fontFamily: 'var(--atlas-sans)',
+          fontSize: 13,
+          fontWeight: 500,
+          boxShadow: '0 6px 18px rgba(22,20,15,.20), 0 0 0 1px var(--atlas-line)',
+          cursor: 'pointer'
+        }}
+      >
+        Fermer
+      </button>
+    </div>
+  );
+}
+
+function RouteErrorToast({ message }: { message: string }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        bottom: 96,
+        left: 16,
+        right: 16,
+        background: 'var(--atlas-paper)',
+        boxShadow: 'var(--atlas-shadow-2), 0 0 0 1px var(--atlas-line)',
+        padding: '8px 14px',
+        borderRadius: 12,
+        fontSize: 12,
+        color: 'var(--atlas-ink-2)',
+        zIndex: 10,
+        textAlign: 'center'
+      }}
+    >
+      {message}
     </div>
   );
 }

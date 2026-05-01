@@ -13,8 +13,17 @@ export const ALL_SOURCES: AtlasListingSource[] = [
   'naef.ch',
   'bernard-nicod',
   'Retraites Populaires',
-  'anibis.ch'
+  'anibis.ch',
+  'Facebook Marketplace'
 ];
+
+export function isAtlasSourceEnabled(
+  enabledSources: Partial<Record<AtlasListingSource, boolean>>,
+  source: AtlasListingSource
+): boolean {
+  if (source === 'Facebook Marketplace') return enabledSources[source] === true;
+  return enabledSources[source] !== false;
+}
 
 export type ScanSourceState = 'done' | 'running' | 'queued' | 'error';
 
@@ -52,7 +61,7 @@ export function buildScanSources(
     };
   }
 
-  const enabled = ALL_SOURCES.filter((s) => profile.enabledSources[s] !== false);
+  const enabled = ALL_SOURCES.filter((s) => isAtlasSourceEnabled(profile.enabledSources, s));
   const total = enabled.length || ALL_SOURCES.length;
   const done = scan?.done ?? 0;
   const running = scan?.currentStep ?? null;

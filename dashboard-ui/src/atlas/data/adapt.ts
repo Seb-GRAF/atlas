@@ -15,7 +15,8 @@ const KNOWN_SOURCES: AtlasListingSource[] = [
   'naef.ch',
   'bernard-nicod',
   'Retraites Populaires',
-  'anibis.ch'
+  'anibis.ch',
+  'Facebook Marketplace'
 ];
 
 function normalizeRawStatus(raw: string | null | undefined): AtlasListingStatus {
@@ -51,6 +52,7 @@ function rawSourceLabel(item: ApiListing): string {
   if (raw.includes('bernard') || raw.includes('nicod')) return 'bernard-nicod';
   if (raw.includes('retraites') || raw.includes('populaires')) return 'Retraites Populaires';
   if (raw.includes('anibis')) return 'anibis.ch';
+  if (raw.includes('facebook') || raw.includes('marketplace')) return 'Facebook Marketplace';
   const url = String(item.url || '').trim();
   if (url) {
     try {
@@ -283,6 +285,7 @@ export function adaptProfile(detail: ProfileDetail | null, state: DashboardState
   if (typeof sources.retraitesListings === 'boolean')
     enabled['Retraites Populaires'] = sources.retraitesListings;
   if (typeof sources.anibis === 'boolean') enabled['anibis.ch'] = sources.anibis;
+  enabled['Facebook Marketplace'] = sources.facebookMarketplace === true;
 
   const generatedRaw = state?.latest?.generatedAt ?? null;
   const generatedLabel = generatedRaw ? relativeFr(generatedRaw) : '';

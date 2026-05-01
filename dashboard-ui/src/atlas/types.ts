@@ -15,7 +15,8 @@ export type AtlasListingSource =
   | 'naef.ch'
   | 'bernard-nicod'
   | 'Retraites Populaires'
-  | 'anibis.ch';
+  | 'anibis.ch'
+  | 'Facebook Marketplace';
 
 export type CommuteRouteStatus =
   | 'ok'

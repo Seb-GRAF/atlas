@@ -20,7 +20,8 @@ export const SourcesSchema = z.object({
   bernardNicod: z.boolean().optional(),
   retraitesListings: z.boolean().optional(),
   retraitesProjets: z.boolean().optional(),
-  anibis: z.boolean().optional()
+  anibis: z.boolean().optional(),
+  facebookMarketplace: z.boolean().optional()
 });
 
 export const FiltersSchema = z

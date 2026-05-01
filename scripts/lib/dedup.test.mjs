@@ -246,3 +246,24 @@ test('toDiscardedStub: stub size is materially smaller than full payload', () =>
   const stubBytes = Buffer.byteLength(JSON.stringify(stub));
   assert.ok(stubBytes < fullBytes / 4, `stub (${stubBytes}B) should be at least 4× smaller than full (${fullBytes}B)`);
 });
+
+test('toDiscardedStub: preserves archivedByUser flag (so TTL pruning can skip user-archived entries)', () => {
+  const item = {
+    id: 'flatfox:777',
+    address: 'Av. Foo 1, 1003 Lausanne',
+    area: 'Lausanne',
+    rooms: 2,
+    surfaceM2: 50,
+    totalChf: 1500,
+    isRemoved: true,
+    removedAt: '2026-05-01T11:00:00.000Z',
+    firstSeenAt: '2026-04-29T08:00:00.000Z',
+    lastSeenAt: '2026-04-30T08:00:00.000Z',
+    filterReason: 'archived-by-user',
+    archivedByUser: true
+  };
+  const stub = toDiscardedStub(item);
+  assert.equal(stub.archivedByUser, true, 'archivedByUser flag must survive stubbing');
+  assert.equal(stub.isStub, true);
+  assert.equal(stub.isRemoved, true);
+});

@@ -323,6 +323,7 @@ export function toDiscardedStub(item) {
   } else {
     stub.display = false;
   }
+  if (item.archivedByUser === true) stub.archivedByUser = true;
   return stub;
 }
 

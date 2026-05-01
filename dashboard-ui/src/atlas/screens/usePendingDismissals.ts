@@ -10,6 +10,13 @@ type Pending = {
 
 export function usePendingDismissals(commit: (id: string) => void) {
   const [ids, setIds] = useState<string[]>([]);
+  // IDs that are transitioning *out* of pending because of an explicit undo
+  // (not a flush). Consumers use this to decide whether the row should
+  // re-expand in place. The flag lives for one render cycle; it's cleared
+  // synchronously after the same render that drops the id from `ids`.
+  const [restoringIds, setRestoringIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
   const pendingRef = useRef<Map<string, Pending>>(new Map());
 
   // Latest committer; stored in a ref so timers always call the current one
@@ -48,12 +55,23 @@ export function usePendingDismissals(commit: (id: string) => void) {
   );
 
   const undoAll = useCallback(() => {
+    const restoring = new Set<string>();
     for (const entry of pendingRef.current.values()) {
       window.clearTimeout(entry.timer);
+      restoring.add(entry.id);
     }
     pendingRef.current.clear();
+    setRestoringIds(restoring);
     setIds([]);
   }, []);
+
+  // Clear the restoring flag once consumers have had a chance to react to the
+  // pending=false transition. We clear it the render *after* it was set so the
+  // row's effect (driven by `pending`) can read it during its run.
+  useEffect(() => {
+    if (restoringIds.size === 0) return;
+    setRestoringIds(new Set());
+  }, [restoringIds]);
 
   // On unmount: flush any pending dismissals so the user doesn't lose them.
   useEffect(() => {
@@ -72,6 +90,7 @@ export function usePendingDismissals(commit: (id: string) => void) {
   return {
     pendingIds: idSet,
     pendingCount: ids.length,
+    restoringIds,
     schedule,
     undoAll
   };

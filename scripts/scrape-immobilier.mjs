@@ -3372,6 +3372,9 @@ async function main() {
   const cutoff = Date.now() - STUB_TTL_MS;
   const isExpiredStub = (entry) => {
     if (!isStub(entry)) return false;
+    // User-archived stubs are permanent: the user explicitly rejected the
+    // listing and re-discovering it later would silently undo that intent.
+    if (entry.archivedByUser === true) return false;
     const newest = entry.removedAt || entry.lastSeenAt || entry.firstSeenAt;
     if (!newest) return false; // no timestamp → keep, can't reason about age
     const ts = Date.parse(newest);

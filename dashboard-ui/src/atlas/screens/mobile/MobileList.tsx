@@ -22,6 +22,7 @@ type MobileListProps = {
   onArchive?: (id: string) => void;
   onArchiveAll?: () => void;
   pendingIds?: ReadonlySet<string>;
+  restoringIds?: ReadonlySet<string>;
   onScan: () => void;
   scanning: boolean;
   onOpenProfileSwitcher: () => void;
@@ -90,7 +91,8 @@ const sortBtnStyle: CSSProperties = {
   color: 'var(--atlas-ink-3)',
   border: 0,
   cursor: 'pointer',
-  fontFamily: 'var(--atlas-sans)'
+  fontFamily: 'var(--atlas-sans)',
+  whiteSpace: 'nowrap'
 };
 
 function formatZonesShort(zones: string[], shortTitle: string) {
@@ -109,6 +111,7 @@ export function MobileList({
   onArchive,
   onArchiveAll,
   pendingIds,
+  restoringIds,
   onScan,
   scanning,
   onOpenProfileSwitcher,
@@ -263,9 +266,10 @@ export function MobileList({
       style={{
         padding: '14px 16px 6px',
         display: 'flex',
-        alignItems: 'baseline',
+        alignItems: 'center',
         justifyContent: 'space-between',
-        gap: 8
+        gap: 12,
+        flexWrap: 'wrap'
       }}
     >
       <div
@@ -273,12 +277,20 @@ export function MobileList({
           fontSize: 22,
           fontWeight: 500,
           letterSpacing: '-0.022em',
-          color: 'var(--atlas-ink)'
+          color: 'var(--atlas-ink)',
+          whiteSpace: 'nowrap'
         }}
       >
         {count} appartement{count > 1 ? 's' : ''}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          marginInlineEnd: -6
+        }}
+      >
         {showArchiveAll ? (
           <button
             type="button"
@@ -389,6 +401,7 @@ export function MobileList({
                 onSelect={onSelect}
                 onArchive={onArchive}
                 pending={pendingIds?.has(listing.id)}
+                restoring={restoringIds?.has(listing.id)}
               />
             ))
           )}

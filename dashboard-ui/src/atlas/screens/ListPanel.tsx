@@ -15,6 +15,7 @@ type ListPanelProps = {
   onArchive?: (id: string) => void;
   onArchiveAll?: () => void;
   pendingIds?: ReadonlySet<string>;
+  restoringIds?: ReadonlySet<string>;
   generatedAt: string;
   totalCount?: number;
   emptyContent?: React.ReactNode;
@@ -62,6 +63,7 @@ export function ListPanel({
   onArchive,
   onArchiveAll,
   pendingIds,
+  restoringIds,
   generatedAt,
   totalCount,
   emptyContent,
@@ -105,7 +107,8 @@ export function ListPanel({
               fontSize: 18,
               fontWeight: 500,
               letterSpacing: '-0.01em',
-              color: 'var(--atlas-ink)'
+              color: 'var(--atlas-ink)',
+              whiteSpace: 'nowrap'
             }}
           >
             {count} appartement{count > 1 ? 's' : ''}
@@ -115,10 +118,11 @@ export function ListPanel({
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'flex-end',
-              gap: 6
+              gap: 6,
+              minWidth: 0
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               {showArchiveAll ? (
                 <button
                   type="button"
@@ -137,14 +141,26 @@ export function ListPanel({
                     fontFamily: 'var(--atlas-sans)',
                     fontSize: 11.5,
                     fontWeight: 500,
-                    color: 'var(--atlas-ink-3)'
+                    color: 'var(--atlas-ink-3)',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   <Icons.Close size={12} stroke={1.8} />
                   Tout archiver
                 </button>
               ) : null}
-              <SortMenu sort={sort} onChange={onSortChange} align="right" />
+              <SortMenu
+                sort={sort}
+                onChange={onSortChange}
+                align="right"
+                buttonStyle={{
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  color: 'var(--atlas-ink-3)',
+                  padding: '4px 10px',
+                  whiteSpace: 'nowrap'
+                }}
+              />
             </div>
             {generatedAt ? (
               <span style={{ fontSize: 10.5, color: 'var(--atlas-ink-3)' }}>maj. {generatedAt}</span>
@@ -208,6 +224,7 @@ export function ListPanel({
               onSelect={onSelect}
               onArchive={onArchive}
               pending={pendingIds?.has(listing.id)}
+              restoring={restoringIds?.has(listing.id)}
               registerRef={(el) => {
                 if (el) rowRefs.current.set(listing.id, el);
                 else rowRefs.current.delete(listing.id);

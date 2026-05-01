@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent
+} from 'react';
 import { Icons, Mono, PhotoFrame, SourceMono, formatCHF } from '../../components';
 import type { AtlasListing } from '../../types';
 import { CommuteChips } from '../CommuteChips';
@@ -9,12 +16,17 @@ type MobileListRowProps = {
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
   pending?: boolean;
+  // True for one render when an undo restored this id. Distinguishes a
+  // genuine "come back" transition (re-expand) from the natural flush at
+  // the end of the undo window (don't re-expand; parent will unmount).
+  restoring?: boolean;
 };
 
 const wrapperStyle: CSSProperties = {
   position: 'relative',
   flexShrink: 0,
-  overflow: 'hidden'
+  overflow: 'hidden',
+  contain: 'layout'
 };
 
 const actionLayerStyle: CSSProperties = {
@@ -30,13 +42,18 @@ const actionLayerStyle: CSSProperties = {
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
   fontWeight: 600,
-  pointerEvents: 'none'
+  pointerEvents: 'none',
+  opacity: 0,
+  color: 'var(--atlas-ink-2)',
+  willChange: 'opacity, color'
 };
 
 const actionPillStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 8
+  gap: 8,
+  opacity: 0,
+  willChange: 'opacity'
 };
 
 const rowStyle: CSSProperties = {
@@ -108,49 +125,99 @@ const metaItem: CSSProperties = {
 };
 
 const SWIPE_THRESHOLD = 96;
+const COLLAPSE_MS = 240;
+const COLLAPSE_EASING = 'cubic-bezier(.2,.7,.2,1)';
 
-export function MobileListRow({ listing, onSelect, onArchive, pending = false }: MobileListRowProps) {
+export function MobileListRow({
+  listing,
+  onSelect,
+  onArchive,
+  pending = false,
+  restoring = false
+}: MobileListRowProps) {
   const swipeEnabled = !!onArchive;
 
   const swipe = useSwipeToArchive({
     threshold: SWIPE_THRESHOLD,
+    imperative: true,
     onCommit: () => {
       onArchive?.(listing.id);
     }
   });
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
   const [collapsing, setCollapsing] = useState(false);
+  // Once a row has started collapsing due to commit, latch this. While
+  // latched, we never re-expand on pending=false — only the explicit undo
+  // path (restoring=true) clears the latch and triggers re-expansion.
+  const leavingRef = useRef(false);
+  // Tracks whether a re-expand animation is in flight, so subsequent effect
+  // runs (e.g. when `restoring` flips back to false) don't restart it.
+  const restoringInFlightRef = useRef(false);
   const swipeReset = swipe.reset;
-  const wasSwipedRef = useRef(false);
 
   useEffect(() => {
     const node = wrapperRef.current;
     if (!node) return;
 
     if (pending) {
-      wasSwipedRef.current = !!swipe.committed;
+      leavingRef.current = true;
+
+      // Pin current rendered height, then drop to 0 next frame.
       const h = node.getBoundingClientRect().height;
       node.style.height = `${h}px`;
+      node.style.willChange = 'height';
       void node.offsetHeight;
       const id = requestAnimationFrame(() => {
         node.style.height = '0px';
         setCollapsing(true);
       });
-      return () => cancelAnimationFrame(id);
+
+      const onCollapseEnd = (e: TransitionEvent) => {
+        if (e.target !== node) return;
+        if (e.propertyName !== 'height') return;
+        node.style.willChange = '';
+        node.removeEventListener('transitionend', onCollapseEnd);
+      };
+      node.addEventListener('transitionend', onCollapseEnd);
+
+      return () => {
+        cancelAnimationFrame(id);
+        node.removeEventListener('transitionend', onCollapseEnd);
+      };
     }
 
-    swipeReset();
-    wasSwipedRef.current = false;
+    // pending=false branch.
+    // If we're leaving but it's not an explicit undo, do nothing — the
+    // parent will unmount us imminently. This kills the "appears and
+    // disappears" flash that used to happen at the end of the undo window.
+    if (leavingRef.current && !restoring) {
+      return;
+    }
 
-    if (!collapsing && !node.style.height) return;
+    // If a re-expand animation is already in flight from a previous effect
+    // run (e.g. `restoring` flipped back to false), don't restart it.
+    if (restoringInFlightRef.current) return;
+
+    // Genuine undo (or first mount with no prior collapse). Animate the inner
+    // button back to translate=0 in lockstep with the wrapper re-expanding.
+    const wasLeaving = leavingRef.current;
+    if (!wasLeaving && !collapsing && !node.style.height) {
+      // Nothing to undo — fresh mount or already at rest.
+      return;
+    }
+    leavingRef.current = false;
+    restoringInFlightRef.current = true;
+    swipeReset({ animate: wasLeaving });
 
     node.style.height = '';
     const target = node.scrollHeight;
     node.style.height = '0px';
+    node.style.willChange = 'height';
     void node.offsetHeight;
     setCollapsing(false);
-    requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       node.style.height = `${target}px`;
     });
 
@@ -158,12 +225,17 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
       if (e.target !== node) return;
       if (e.propertyName !== 'height') return;
       node.style.height = '';
+      node.style.willChange = '';
+      restoringInFlightRef.current = false;
       node.removeEventListener('transitionend', onEnd);
     };
     node.addEventListener('transitionend', onEnd);
-    return () => node.removeEventListener('transitionend', onEnd);
+    return () => {
+      cancelAnimationFrame(id);
+      node.removeEventListener('transitionend', onEnd);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending, swipeReset]);
+  }, [pending, restoring, swipeReset]);
 
   const suppressClickRef = useRef(false);
 
@@ -195,18 +267,13 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
       }
     : null;
 
-  const tx = swipeEnabled ? swipe.translateX : 0;
-  const isDragging = swipeEnabled && swipe.swiping;
-  const released = swipeEnabled && !swipe.swiping;
-  const past = Math.abs(tx) > SWIPE_THRESHOLD;
-  const actionOpacity = swipeEnabled ? Math.min(1, Math.abs(tx) / SWIPE_THRESHOLD) : 0;
-
-  const fadeOnCollapse = collapsing && !wasSwipedRef.current;
+  // Fade only when collapsing without a swipe commit (e.g. tap-to-archive in
+  // some other future path). After a swipe, the inner element is already
+  // translated offscreen, so a fade would look wrong.
+  const fadeOnCollapse = collapsing && !leavingRef.current;
   const collapseStyle: CSSProperties = {
-    transition:
-      'height 260ms cubic-bezier(.2,.7,.2,1), opacity 200ms ease, border-color 200ms ease',
+    transition: `height ${COLLAPSE_MS}ms ${COLLAPSE_EASING}, opacity 200ms ease`,
     opacity: fadeOnCollapse ? 0 : 1,
-    borderBottomColor: collapsing ? 'transparent' : undefined,
     pointerEvents: pending ? 'none' : undefined
   };
 
@@ -216,20 +283,13 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
       style={{ ...wrapperStyle, ...collapseStyle }}
       aria-hidden={pending || undefined}
     >
-      {swipeEnabled && tx !== 0 ? (
-        <div
-          style={{
-            ...actionLayerStyle,
-            opacity: actionOpacity,
-            color: past ? 'var(--atlas-ember, #c43d2a)' : 'var(--atlas-ink-2)'
-          }}
-          aria-hidden
-        >
-          <span style={{ ...actionPillStyle, opacity: tx > 0 ? 1 : 0 }}>
+      {swipeEnabled ? (
+        <div ref={swipe.registerOverlay} style={actionLayerStyle} aria-hidden>
+          <span ref={swipe.registerLeftPill} style={actionPillStyle}>
             <Icons.Close size={16} stroke={2} />
             Archiver
           </span>
-          <span style={{ ...actionPillStyle, opacity: tx < 0 ? 1 : 0 }}>
+          <span ref={swipe.registerRightPill} style={actionPillStyle}>
             Archiver
             <Icons.Close size={16} stroke={2} />
           </span>
@@ -237,17 +297,17 @@ export function MobileListRow({ listing, onSelect, onArchive, pending = false }:
       ) : null}
 
       <div
+        ref={(el) => {
+          innerRef.current = el;
+          swipe.registerTarget(el);
+        }}
         role="button"
         tabIndex={0}
         aria-label={listing.title}
         onClick={open}
         onKeyDown={onKeyDown}
         {...(handlers ?? {})}
-        style={{
-          ...rowStyle,
-          transform: tx !== 0 ? `translate3d(${tx}px, 0, 0)` : undefined,
-          transition: released && !isDragging ? 'transform 220ms cubic-bezier(.2,.8,.2,1)' : undefined
-        }}
+        style={rowStyle}
       >
         <div style={{ position: 'relative', width: '100%' }}>
           <PhotoFrame images={listing.images} aspect="16 / 10" radius={14} count={false} />

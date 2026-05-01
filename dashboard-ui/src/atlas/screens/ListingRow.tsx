@@ -18,6 +18,10 @@ type ListingRowProps = {
   onSelect: (id: string) => void;
   onArchive?: (id: string) => void;
   pending?: boolean;
+  // True for one render when an undo restored this id. Distinguishes a
+  // genuine "come back" transition (re-expand) from the natural flush at
+  // the end of the undo window (don't re-expand; parent will unmount).
+  restoring?: boolean;
   registerRef?: (el: HTMLDivElement | null) => void;
 };
 
@@ -35,7 +39,8 @@ const wrapperStyle: CSSProperties = {
   borderRadius: 14,
   flexShrink: 0,
   overflow: 'hidden',
-  marginBottom: 4
+  marginBottom: 4,
+  contain: 'layout'
 };
 
 const actionLayerStyle: CSSProperties = {
@@ -52,16 +57,23 @@ const actionLayerStyle: CSSProperties = {
   textTransform: 'uppercase',
   fontWeight: 600,
   pointerEvents: 'none',
-  borderRadius: 14
+  borderRadius: 14,
+  opacity: 0,
+  color: 'var(--atlas-ink-2)',
+  willChange: 'opacity, color'
 };
 
 const actionPillStyle: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6
+  gap: 6,
+  opacity: 0,
+  willChange: 'opacity'
 };
 
 const SWIPE_THRESHOLD = 96;
+const COLLAPSE_MS = 240;
+const COLLAPSE_EASING = 'cubic-bezier(.2,.7,.2,1)';
 
 export function ListingRow({
   listing,
@@ -69,6 +81,7 @@ export function ListingRow({
   onSelect,
   onArchive,
   pending = false,
+  restoring = false,
   registerRef
 }: ListingRowProps) {
   const cover = listing.images[0];
@@ -82,6 +95,7 @@ export function ListingRow({
   const swipeEnabled = !!onArchive;
   const swipe = useSwipeToArchive({
     threshold: SWIPE_THRESHOLD,
+    imperative: true,
     onCommit: () => {
       onArchive?.(listing.id);
     }
@@ -90,7 +104,10 @@ export function ListingRow({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [collapsing, setCollapsing] = useState(false);
   const swipeReset = swipe.reset;
-  const wasSwipedRef = useRef(false);
+  // Latched once the row has begun collapsing due to a commit. Cleared only
+  // by an explicit undo (restoring=true).
+  const leavingRef = useRef(false);
+  const restoringInFlightRef = useRef(false);
   const setWrapperRef = useCallback(
     (node: HTMLDivElement | null) => {
       wrapperRef.current = node;
@@ -104,35 +121,54 @@ export function ListingRow({
     if (!node) return;
 
     if (pending) {
-      // Remember whether the row left via swipe — for swipe, the translateX
-      // already animates it offscreen so we skip the in-place fade.
-      wasSwipedRef.current = !!swipe.committed;
+      leavingRef.current = true;
 
-      // Lock in the current rendered height as the starting value, then drop
-      // to 0 on the next frame so the browser can transition layout below.
       const h = node.getBoundingClientRect().height;
       node.style.height = `${h}px`;
+      node.style.willChange = 'height';
       void node.offsetHeight;
       const id = requestAnimationFrame(() => {
         node.style.height = '0px';
         setCollapsing(true);
       });
-      return () => cancelAnimationFrame(id);
+
+      const onCollapseEnd = (e: TransitionEvent) => {
+        if (e.target !== node) return;
+        if (e.propertyName !== 'height') return;
+        node.style.willChange = '';
+        node.removeEventListener('transitionend', onCollapseEnd);
+      };
+      node.addEventListener('transitionend', onCollapseEnd);
+
+      return () => {
+        cancelAnimationFrame(id);
+        node.removeEventListener('transitionend', onCollapseEnd);
+      };
     }
 
-    // Re-opening (undo). Reset any committed swipe state so the row is
-    // visible again instead of stuck offscreen.
-    swipeReset();
-    wasSwipedRef.current = false;
+    // pending=false branch: skip re-expand on natural flush. Parent will
+    // unmount the row imminently; not animating prevents the brief flash.
+    if (leavingRef.current && !restoring) {
+      return;
+    }
 
-    if (!collapsing && !node.style.height) return;
+    if (restoringInFlightRef.current) return;
+
+    const wasLeaving = leavingRef.current;
+    if (!wasLeaving && !collapsing && !node.style.height) {
+      return;
+    }
+    leavingRef.current = false;
+    restoringInFlightRef.current = true;
+    swipeReset({ animate: wasLeaving });
 
     node.style.height = '';
     const target = node.scrollHeight;
     node.style.height = '0px';
+    node.style.willChange = 'height';
     void node.offsetHeight;
     setCollapsing(false);
-    requestAnimationFrame(() => {
+    const id = requestAnimationFrame(() => {
       node.style.height = `${target}px`;
     });
 
@@ -140,12 +176,17 @@ export function ListingRow({
       if (e.target !== node) return;
       if (e.propertyName !== 'height') return;
       node.style.height = '';
+      node.style.willChange = '';
+      restoringInFlightRef.current = false;
       node.removeEventListener('transitionend', onEnd);
     };
     node.addEventListener('transitionend', onEnd);
-    return () => node.removeEventListener('transitionend', onEnd);
+    return () => {
+      cancelAnimationFrame(id);
+      node.removeEventListener('transitionend', onEnd);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pending, swipeReset]);
+  }, [pending, restoring, swipeReset]);
 
   const suppressClickRef = useRef(false);
 
@@ -177,16 +218,13 @@ export function ListingRow({
       }
     : null;
 
-  const tx = swipeEnabled ? swipe.translateX : 0;
-  const isDragging = swipeEnabled && swipe.swiping;
-  const released = swipeEnabled && !swipe.swiping;
-  const past = Math.abs(tx) > SWIPE_THRESHOLD;
-  const actionOpacity = swipeEnabled ? Math.min(1, Math.abs(tx) / SWIPE_THRESHOLD) : 0;
+  // Active = gesture in progress or just committed. Used only for the row's
+  // background tint — a state-driven boolean, not per-frame.
+  const swipeActive = swipeEnabled && (swipe.swiping || !!swipe.committed);
 
-  const fadeOnCollapse = collapsing && !wasSwipedRef.current;
+  const fadeOnCollapse = collapsing && !leavingRef.current;
   const collapseStyle: CSSProperties = {
-    transition:
-      'height 260ms cubic-bezier(.2,.7,.2,1), opacity 200ms ease, margin-bottom 260ms cubic-bezier(.2,.7,.2,1)',
+    transition: `height ${COLLAPSE_MS}ms ${COLLAPSE_EASING}, opacity 200ms ease, margin-bottom ${COLLAPSE_MS}ms ${COLLAPSE_EASING}`,
     opacity: fadeOnCollapse ? 0 : 1,
     marginBottom: collapsing ? 0 : 4,
     pointerEvents: pending ? 'none' : undefined
@@ -198,26 +236,20 @@ export function ListingRow({
       style={{ ...wrapperStyle, ...collapseStyle }}
       aria-hidden={pending || undefined}
     >
-      {swipeEnabled && tx !== 0 ? (
-        <div
-          style={{
-            ...actionLayerStyle,
-            opacity: actionOpacity,
-            color: past ? 'var(--atlas-ember, #c43d2a)' : 'var(--atlas-ink-2)'
-          }}
-          aria-hidden
-        >
-          <span style={{ ...actionPillStyle, opacity: tx > 0 ? 1 : 0 }}>
+      {swipeEnabled ? (
+        <div ref={swipe.registerOverlay} style={actionLayerStyle} aria-hidden>
+          <span ref={swipe.registerLeftPill} style={actionPillStyle}>
             <Icons.Close size={14} stroke={2} />
             Archiver
           </span>
-          <span style={{ ...actionPillStyle, opacity: tx < 0 ? 1 : 0 }}>
+          <span ref={swipe.registerRightPill} style={actionPillStyle}>
             Archiver
             <Icons.Close size={14} stroke={2} />
           </span>
         </div>
       ) : null}
       <div
+        ref={swipe.registerTarget}
         role="button"
         tabIndex={0}
         aria-label={listing.title}
@@ -233,17 +265,14 @@ export function ListingRow({
           borderRadius: 14,
           background: selected
             ? 'var(--atlas-ember-2)'
-            : tx !== 0
+            : swipeActive
               ? 'var(--atlas-bg, #f6f3ee)'
               : 'transparent',
           boxShadow: 'none',
           border: 0,
           cursor: 'pointer',
           touchAction: 'pan-y',
-          transition: released && !isDragging
-            ? 'transform 220ms cubic-bezier(.2,.8,.2,1), background 140ms ease, box-shadow 140ms ease'
-            : 'background 140ms ease, box-shadow 140ms ease',
-          transform: tx !== 0 ? `translate3d(${tx}px, 0, 0)` : undefined,
+          transition: 'background 140ms ease, box-shadow 140ms ease',
           position: 'relative'
         }}
       >

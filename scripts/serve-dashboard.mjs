@@ -9,7 +9,7 @@ import {
   formatScanFailureMessage,
   publicScanProgress
 } from './lib/scan-progress.mjs';
-import { isStub } from './lib/dedup.mjs';
+import { isStub, toDiscardedStub } from './lib/dedup.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -712,9 +712,28 @@ async function deleteListing(profile, id) {
   const tracker = await readJsonSafe(paths.trackerPath, null);
   if (!tracker || !Array.isArray(tracker.listings)) return false;
 
-  const before = tracker.listings.length;
-  tracker.listings = tracker.listings.filter((x) => String(x.id) !== String(id));
-  if (tracker.listings.length === before) return false;
+  const idx = tracker.listings.findIndex((x) => String(x.id) === String(id));
+  if (idx === -1) return false;
+
+  // Replace the entry with a stub instead of removing it. The scraper's
+  // re-discovery suppression (scrape-immobilier.mjs, near "stubIds") matches
+  // freshly-scraped listings against stub id/dedupKey and skips them, so the
+  // listing won't reappear on the next scan. Without the stub the scraper
+  // would re-introduce the listing as new on every run.
+  const item = tracker.listings[idx];
+  if (!isStub(item)) {
+    const dismissed = {
+      ...item,
+      isRemoved: true,
+      removedAt: item.removedAt || new Date().toISOString(),
+      filterReason: 'archived-by-user',
+      archivedByUser: true
+    };
+    const stub = toDiscardedStub(dismissed);
+    tracker.listings[idx] = stub || dismissed;
+  } else if (item.archivedByUser !== true) {
+    tracker.listings[idx] = { ...item, archivedByUser: true };
+  }
 
   tracker.updatedAt = new Date().toISOString();
   await fs.writeFile(paths.trackerPath, JSON.stringify(tracker, null, 2));

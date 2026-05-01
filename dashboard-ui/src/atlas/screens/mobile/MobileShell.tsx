@@ -99,8 +99,13 @@ export function MobileShell() {
   }, [urlState.listing, sheetOpen]);
 
   const dismissCallback = useCallback((id: string) => dismiss.mutate(id), [dismiss]);
-  const { pendingIds, pendingCount, schedule: schedulePending, undoAll: undoPending } =
-    usePendingDismissals(dismissCallback);
+  const {
+    pendingIds,
+    pendingCount,
+    restoringIds: restoringPendingIds,
+    schedule: schedulePending,
+    undoAll: undoPending
+  } = usePendingDismissals(dismissCallback);
 
   const visibleListings = useMemo(
     () => (pendingIds.size === 0 ? listings : listings.filter((l) => !pendingIds.has(l.id))),
@@ -297,6 +302,7 @@ export function MobileShell() {
           onArchive={handleArchive}
           onArchiveAll={handleArchiveAll}
           pendingIds={pendingIds}
+          restoringIds={restoringPendingIds}
           stages={stages}
           stage={urlState.stage}
           onStageChange={(stage) => updateUrl({ stage, listing: null })}

@@ -111,6 +111,15 @@ function DesktopShell() {
       setRouteError(null);
       return;
     }
+    if (selected.transitRouteOverlay && selected.transitRouteOverlay.legs.length > 0) {
+      setRouteOverlay(selected.transitRouteOverlay);
+      setRouteError(
+        selected.transitRouteOverlay.failedCount > 0
+          ? `${selected.transitRouteOverlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`
+          : null
+      );
+      return;
+    }
     if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
     setRouteLoading(true);
     setRouteError(null);

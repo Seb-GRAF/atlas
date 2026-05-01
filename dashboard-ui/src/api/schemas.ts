@@ -94,6 +94,28 @@ const TransitRouteSchema = z.object({
   legs: z.array(CommuteLegSchema)
 });
 
+const RouteOverlayLegSchema = z.object({
+  kind: z.enum(['walk', 'transit']),
+  mode: z.string(),
+  label: z.string(),
+  color: z.string(),
+  coords: z.array(z.tuple([z.number(), z.number()])),
+  failed: z.boolean(),
+  fromName: z.string(),
+  toName: z.string(),
+  minutes: z.number().nullable()
+});
+
+const RouteOverlaySchema = z.object({
+  listingId: z.string(),
+  legs: z.array(RouteOverlayLegSchema),
+  bounds: z.tuple([
+    z.tuple([z.number(), z.number()]),
+    z.tuple([z.number(), z.number()])
+  ]),
+  failedCount: z.number()
+});
+
 export const ListingSchema = z
   .object({
     id: z.union([z.string(), z.number()]),
@@ -137,6 +159,7 @@ export const ListingSchema = z
     transitRouteLabel: z.string().nullable().optional(),
     transitRouteComputedAt: z.string().nullable().optional(),
     transitRoute: TransitRouteSchema.nullable().optional(),
+    transitRouteOverlay: RouteOverlaySchema.nullable().optional(),
     commuteWarnings: z.array(z.string()).optional(),
     publishedAt: z.string().nullable().optional(),
     firstSeenAt: z.string().nullable().optional(),

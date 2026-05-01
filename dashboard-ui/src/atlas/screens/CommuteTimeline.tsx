@@ -15,6 +15,7 @@ type CommuteTimelineListing = Pick<
   | 'transitRouteLabel'
   | 'transitRouteComputedAt'
   | 'transitRoute'
+  | 'transitRouteOverlay'
   | 'commuteWarnings'
 >;
 
@@ -290,8 +291,9 @@ export function CommuteTimeline({ listing, onVisualize, visualizing, visualizing
   const transitStatus = statusLabel(listing.transitRouteStatus);
   const driveStatus = statusLabel(listing.driveRouteStatus);
   const legs = listing.transitRoute?.legs ?? [];
+  const overlayLegs = listing.transitRouteOverlay?.legs ?? [];
   const baseline = routeLabel(listing);
-  const canVisualize = !!onVisualize && legs.length > 0;
+  const canVisualize = !!onVisualize && (legs.length > 0 || overlayLegs.length > 0);
   const hasData =
     !!listing.transitText ||
     !!listing.driveText ||

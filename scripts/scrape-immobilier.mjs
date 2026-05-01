@@ -5,6 +5,7 @@ import https from 'node:https';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+  buildTransitRouteOverlay,
   buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
@@ -750,6 +751,33 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
   }
 }
 
+function buildFootRouteCacheKey(fromLngLat, toLngLat) {
+  return `foot:${fromLngLat[0].toFixed(5)},${fromLngLat[1].toFixed(5)}->${toLngLat[0].toFixed(5)},${toLngLat[1].toFixed(5)}`;
+}
+
+async function fetchFootRoute(fromLngLat, toLngLat, routeCache) {
+  if (!Array.isArray(fromLngLat) || !Array.isArray(toLngLat)) return null;
+
+  const key = buildFootRouteCacheKey(fromLngLat, toLngLat);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh) {
+    if (Array.isArray(cached.route) && cached.route.length >= 2) return cached.route;
+    if (cached.entry?.status === 'route-failed') return null;
+  }
+
+  try {
+    const payload = await fetchJson(
+      `https://router.project-osrm.org/route/v1/foot/${fromLngLat[0]},${fromLngLat[1]};${toLngLat[0]},${toLngLat[1]}?overview=full&geometries=geojson`
+    );
+    const coords = payload?.routes?.[0]?.geometry?.coordinates;
+    const route = Array.isArray(coords) && coords.length >= 2 ? coords : null;
+    setCachedRoute(routeCache, key, { minutes: null, route, status: route ? 'ok' : 'route-failed' });
+    return route;
+  } catch {
+    return Array.isArray(cached.route) && cached.route.length >= 2 ? cached.route : null;
+  }
+}
+
 async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords = null, listingCoords = null) {
   if (!workAddress || !listingAddress) {
     return { minutes: null, route: null, status: 'missing-address' };
@@ -842,6 +870,13 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
     fetchDrivingMinutes(workCoords, distance.listingCoords, routeCache),
     fetchTransitRoute(workAddress, distance.listingAddress, routeCache, workCoords, distance.listingCoords)
   ]);
+  const transitRouteOverlay = transit.route
+    ? await buildTransitRouteOverlay(transit.route, {
+        listingId: String(item.id),
+        listingCoords: distance.listingCoords,
+        resolveFootRoute: (fromLngLat, toLngLat) => fetchFootRoute(fromLngLat, toLngLat, routeCache)
+      })
+    : null;
 
   setCommuteSuccessFields(item, {
     workAddress,
@@ -849,6 +884,7 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
     driveMinutes: drive.minutes,
     transitMinutes: transit.minutes,
     transitRoute: transit.route,
+    transitRouteOverlay,
     driveStatus: drive.status,
     transitStatus: transit.status
   });
@@ -858,6 +894,7 @@ async function computeCommuteFromWork(item, workAddress, workCoords, geocodeCach
   if (drive.status === 'route-failed') warnings.push('Temps voiture indisponible.');
   if (transit.status === 'cached-stale') warnings.push('Trajet public issu du cache.');
   if (transit.status === 'route-failed') warnings.push('Transport public indisponible.');
+  if (transitRouteOverlay?.failedCount > 0) warnings.push('Tracé du trajet partiellement approximatif.');
   item.commuteWarnings = warnings;
 }
 
@@ -2976,6 +3013,7 @@ async function main() {
       transitRouteLabel: 'Arrivée 08:00',
       transitRouteComputedAt: null,
       transitRoute: null,
+      transitRouteOverlay: null,
       commuteWarnings: [],
       distanceComputed: false,
       distanceFromWorkAddress: ''
@@ -2997,6 +3035,7 @@ async function main() {
       transitRouteLabel: source.transitRouteLabel || 'Arrivée 08:00',
       transitRouteComputedAt: source.transitRouteComputedAt || null,
       transitRoute: source.transitRoute || null,
+      transitRouteOverlay: source.transitRouteOverlay || null,
       commuteWarnings: Array.isArray(source.commuteWarnings) ? source.commuteWarnings : [],
       distanceComputed: !!source.distanceComputed,
       distanceFromWorkAddress: source.distanceFromWorkAddress || fallbackWorkAddress

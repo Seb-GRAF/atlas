@@ -120,6 +120,121 @@ export function setCachedRoute(routeCache, key, value) {
   };
 }
 
+function validLngLat(point) {
+  if (!Array.isArray(point) || point.length < 2) return null;
+  const lng = Number(point[0]);
+  const lat = Number(point[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return [lng, lat];
+}
+
+function validLngLats(coords) {
+  if (!Array.isArray(coords)) return [];
+  return coords.map(validLngLat).filter(Boolean);
+}
+
+function listingLngLat(coords) {
+  const lat = Number(coords?.lat);
+  const lon = Number(coords?.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return [lon, lat];
+}
+
+function colorForTransitRouteLeg(leg) {
+  if (leg?.type === 'walk') return '#8a8377';
+  const mode = String(leg?.mode || '').toUpperCase();
+  if (mode === 'B') return '#2c7be5';
+  if (mode === 'S') return '#2bb673';
+  if (mode === 'M') return '#f08c2e';
+  if (mode === 'IC' || mode === 'IR' || mode === 'RE' || mode === 'EC' || mode === 'ICE') return '#d64545';
+  if (mode === 'T') return '#9b59b6';
+  return '#c0623a';
+}
+
+function expandLngLatBounds(bounds, point) {
+  if (!bounds) return [[point[0], point[1]], [point[0], point[1]]];
+  const [[w, s], [e, n]] = bounds;
+  return [
+    [Math.min(w, point[0]), Math.min(s, point[1])],
+    [Math.max(e, point[0]), Math.max(n, point[1])]
+  ];
+}
+
+function routeLegLabel(leg) {
+  return leg?.label || leg?.line || leg?.mode || (leg?.type === 'walk' ? 'WALK' : 'PT');
+}
+
+async function resolveWalkOverlayCoords(leg, isFirstLeg, listingPoint, resolveFootRoute) {
+  const endpoints = validLngLats(leg?.coords);
+  let from = endpoints[0] || null;
+  let to = endpoints.length >= 2 ? endpoints[endpoints.length - 1] : null;
+
+  if (endpoints.length === 1 && isFirstLeg && listingPoint) {
+    from = listingPoint;
+    to = endpoints[0];
+  } else if (!from && isFirstLeg && listingPoint) {
+    from = listingPoint;
+  }
+
+  const fallback = [];
+  if (from) fallback.push(from);
+  if (to) fallback.push(to);
+
+  if (!from || !to || typeof resolveFootRoute !== 'function') {
+    return { coords: fallback.length > 0 ? fallback : endpoints, failed: true };
+  }
+
+  try {
+    const resolved = validLngLats(await resolveFootRoute(from, to));
+    if (resolved.length >= 2) return { coords: resolved, failed: false };
+  } catch {
+    // The overlay remains drawable with endpoint fallback, but visibly failed.
+  }
+
+  return { coords: fallback, failed: true };
+}
+
+export async function buildTransitRouteOverlay(route, options = {}) {
+  const listingPoint = listingLngLat(options.listingCoords);
+  const sourceLegs = Array.isArray(route?.legs) ? route.legs : [];
+  const legs = [];
+  let bounds = null;
+  let failedCount = 0;
+
+  for (let i = 0; i < sourceLegs.length; i++) {
+    const leg = sourceLegs[i];
+    const isWalk = leg?.type === 'walk';
+    const resolved = isWalk
+      ? await resolveWalkOverlayCoords(leg, i === 0, listingPoint, options.resolveFootRoute)
+      : (() => {
+          const coords = validLngLats(leg?.coords);
+          return { coords, failed: coords.length < 2 };
+        })();
+
+    if (resolved.failed) failedCount++;
+    for (const point of resolved.coords) bounds = expandLngLatBounds(bounds, point);
+
+    legs.push({
+      kind: leg?.type,
+      mode: leg?.mode,
+      label: routeLegLabel(leg),
+      color: colorForTransitRouteLeg(leg),
+      coords: resolved.coords,
+      failed: resolved.failed,
+      fromName: leg?.from,
+      toName: leg?.to,
+      minutes: leg?.minutes
+    });
+  }
+
+  return {
+    listingId: options.listingId,
+    legs,
+    bounds: bounds || [[0, 0], [0, 0]],
+    failedCount
+  };
+}
+
 function stationName(stop) {
   return String(stop?.station?.name || '').trim();
 }
@@ -262,6 +377,7 @@ export function clearCommuteFields(item) {
   item.transitRouteLabel = TRANSIT_POLICY.label;
   item.transitRouteComputedAt = null;
   item.transitRoute = null;
+  item.transitRouteOverlay = null;
   item.commuteWarnings = [];
 }
 
@@ -279,6 +395,7 @@ export function setCommuteFailureFields(item, status, message) {
   item.transitRouteLabel = TRANSIT_POLICY.label;
   item.transitRouteComputedAt = new Date().toISOString();
   item.transitRoute = null;
+  item.transitRouteOverlay = null;
   item.transitMinutes = null;
   item.transitText = '';
   item.commuteWarnings = message ? [message] : [];
@@ -299,6 +416,7 @@ function projectCommuteFields(source, { visible, workAddress: fallbackWorkAddres
     transitRouteLabel: source.transitRouteLabel || TRANSIT_POLICY.label,
     transitRouteComputedAt: source.transitRouteComputedAt || null,
     transitRoute: source.transitRoute || null,
+    transitRouteOverlay: source.transitRouteOverlay || null,
     commuteWarnings: Array.isArray(source.commuteWarnings) ? source.commuteWarnings : [],
     distanceComputed: !!source.distanceComputed,
     distanceFromWorkAddress: source.distanceFromWorkAddress || fallbackWorkAddress
@@ -355,6 +473,7 @@ export function setCommuteSuccessFields(item, result) {
   item.transitRouteLabel = TRANSIT_POLICY.label;
   item.transitRouteComputedAt = new Date().toISOString();
   item.transitRoute = result.transitRoute || null;
+  item.transitRouteOverlay = result.transitRouteOverlay || null;
   item.commuteWarnings = [];
 }
 

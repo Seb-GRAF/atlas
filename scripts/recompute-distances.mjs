@@ -4,6 +4,7 @@ import path from 'node:path';
 import https from 'node:https';
 import { fileURLToPath } from 'node:url';
 import {
+  buildTransitRouteOverlay,
   buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
@@ -146,6 +147,33 @@ async function fetchDrivingMinutes(workCoords, listingCoords, routeCache) {
   }
 }
 
+function buildFootRouteCacheKey(fromLngLat, toLngLat) {
+  return `foot:${fromLngLat[0].toFixed(5)},${fromLngLat[1].toFixed(5)}->${toLngLat[0].toFixed(5)},${toLngLat[1].toFixed(5)}`;
+}
+
+async function fetchFootRoute(fromLngLat, toLngLat, routeCache) {
+  if (!Array.isArray(fromLngLat) || !Array.isArray(toLngLat)) return null;
+
+  const key = buildFootRouteCacheKey(fromLngLat, toLngLat);
+  const cached = getCachedRoute(routeCache, key, TRAVEL_CACHE_TTL_MS);
+  if (cached.fresh) {
+    if (Array.isArray(cached.route) && cached.route.length >= 2) return cached.route;
+    if (cached.entry?.status === 'route-failed') return null;
+  }
+
+  try {
+    const payload = await httpsGet(
+      `https://router.project-osrm.org/route/v1/foot/${fromLngLat[0]},${fromLngLat[1]};${toLngLat[0]},${toLngLat[1]}?overview=full&geometries=geojson`
+    );
+    const coords = payload?.routes?.[0]?.geometry?.coordinates;
+    const route = Array.isArray(coords) && coords.length >= 2 ? coords : null;
+    setCachedRoute(routeCache, key, { minutes: null, route, status: route ? 'ok' : 'route-failed' });
+    return route;
+  } catch {
+    return Array.isArray(cached.route) && cached.route.length >= 2 ? cached.route : null;
+  }
+}
+
 async function fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords = null, listingCoords = null) {
   if (!workAddress || !listingAddress) {
     return { minutes: null, route: null, status: 'missing-address' };
@@ -247,6 +275,13 @@ async function main() {
     const distanceKm = haversineKm(workCoords.lat, workCoords.lon, listingCoords.lat, listingCoords.lon);
     const drive = await fetchDrivingMinutes(workCoords, listingCoords, routeCache);
     const transit = await fetchTransitRoute(workAddress, listingAddress, routeCache, workCoords, listingCoords);
+    const transitRouteOverlay = transit.route
+      ? await buildTransitRouteOverlay(transit.route, {
+          listingId: String(listing.id),
+          listingCoords,
+          resolveFootRoute: (fromLngLat, toLngLat) => fetchFootRoute(fromLngLat, toLngLat, routeCache)
+        })
+      : null;
 
     setCommuteSuccessFields(listing, {
       workAddress,
@@ -254,6 +289,7 @@ async function main() {
       driveMinutes: drive.minutes,
       transitMinutes: transit.minutes,
       transitRoute: transit.route,
+      transitRouteOverlay,
       driveStatus: drive.status,
       transitStatus: transit.status
     });
@@ -261,7 +297,8 @@ async function main() {
       drive.status === 'cached-stale' ? 'Temps voiture issu du cache.' : '',
       transit.status === 'cached-stale' ? 'Trajet public issu du cache.' : '',
       drive.status === 'route-failed' ? 'Temps voiture indisponible.' : '',
-      transit.status === 'route-failed' ? 'Transport public indisponible.' : ''
+      transit.status === 'route-failed' ? 'Transport public indisponible.' : '',
+      transitRouteOverlay?.failedCount > 0 ? 'Tracé du trajet partiellement approximatif.' : ''
     ].filter(Boolean);
 
     console.log(`  ${listing.id}: ${listing.distanceKm} km, ${formatMinutesText(drive.minutes) || '?'} drive`);

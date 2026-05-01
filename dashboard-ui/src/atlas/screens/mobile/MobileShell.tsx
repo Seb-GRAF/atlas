@@ -133,11 +133,20 @@ export function MobileShell() {
       setRouteError(null);
       return;
     }
-    if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
     // Hide the sheet so the user can actually see the route on the map; the
     // listing stays selected, the route stays drawn.
     setSheetOpen(false);
     setMode('map');
+    if (selected.transitRouteOverlay && selected.transitRouteOverlay.legs.length > 0) {
+      setRouteOverlay(selected.transitRouteOverlay);
+      setRouteError(
+        selected.transitRouteOverlay.failedCount > 0
+          ? `${selected.transitRouteOverlay.failedCount} segment(s) indisponible(s) — tracé approximatif.`
+          : null
+      );
+      return;
+    }
+    if (!selected.transitRoute || selected.transitRoute.legs.length === 0) return;
     setRouteLoading(true);
     setRouteError(null);
     try {

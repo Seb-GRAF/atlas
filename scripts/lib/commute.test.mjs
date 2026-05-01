@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildTransitRouteOverlay,
   buildDriveCacheKey,
   buildTransitCacheKey,
   clearCommuteFields,
@@ -17,6 +18,171 @@ import {
   setCommuteSuccessFields,
   shouldRecomputeListingCommute
 } from './commute.mjs';
+
+test('buildTransitRouteOverlay uses transit coordinates directly without a resolver', async () => {
+  const route = {
+    legs: [
+      {
+        type: 'transit',
+        mode: 'RE',
+        label: 'RE33',
+        from: 'Vevey',
+        to: 'Lausanne',
+        minutes: 15,
+        coords: [[6.8433, 46.4628], [6.6291, 46.5168]]
+      }
+    ]
+  };
+
+  const overlay = await buildTransitRouteOverlay(route, { listingId: 'listing-1' });
+
+  assert.deepEqual(overlay, {
+    listingId: 'listing-1',
+    legs: [
+      {
+        kind: 'transit',
+        mode: 'RE',
+        label: 'RE33',
+        color: '#d64545',
+        coords: [[6.8433, 46.4628], [6.6291, 46.5168]],
+        failed: false,
+        fromName: 'Vevey',
+        toName: 'Lausanne',
+        minutes: 15
+      }
+    ],
+    bounds: [[6.6291, 46.4628], [6.8433, 46.5168]],
+    failedCount: 0
+  });
+});
+
+test('buildTransitRouteOverlay resolves walk geometry with the injected foot resolver', async () => {
+  const calls = [];
+  const route = {
+    legs: [
+      {
+        type: 'walk',
+        mode: 'walk',
+        label: 'WALK',
+        from: 'Rue de la Gare',
+        to: 'Lausanne',
+        minutes: 6,
+        coords: [[6.6320, 46.5170], [6.6296, 46.5176]]
+      }
+    ]
+  };
+
+  const overlay = await buildTransitRouteOverlay(route, {
+    listingId: 'listing-2',
+    async resolveFootRoute(fromLngLat, toLngLat) {
+      calls.push([fromLngLat, toLngLat]);
+      return [[6.6320, 46.5170], [6.6310, 46.5174], [6.6296, 46.5176]];
+    }
+  });
+
+  assert.deepEqual(calls, [[[6.6320, 46.5170], [6.6296, 46.5176]]]);
+  assert.deepEqual(overlay.legs[0], {
+    kind: 'walk',
+    mode: 'walk',
+    label: 'WALK',
+    color: '#8a8377',
+    coords: [[6.6320, 46.5170], [6.6310, 46.5174], [6.6296, 46.5176]],
+    failed: false,
+    fromName: 'Rue de la Gare',
+    toName: 'Lausanne',
+    minutes: 6
+  });
+  assert.equal(overlay.failedCount, 0);
+  assert.deepEqual(overlay.bounds, [[6.6296, 46.5170], [6.6320, 46.5176]]);
+});
+
+test('buildTransitRouteOverlay uses listing coordinates for a missing first walk endpoint', async () => {
+  const calls = [];
+  const route = {
+    legs: [
+      {
+        type: 'walk',
+        mode: 'walk',
+        label: 'WALK',
+        from: 'Listing address',
+        to: 'Renens VD',
+        minutes: 4,
+        coords: [[6.5786, 46.5378]]
+      }
+    ]
+  };
+
+  const overlay = await buildTransitRouteOverlay(route, {
+    listingId: 'listing-3',
+    listingCoords: { lat: 46.5362, lon: 6.5804 },
+    async resolveFootRoute(fromLngLat, toLngLat) {
+      calls.push([fromLngLat, toLngLat]);
+      return [[6.5804, 46.5362], [6.5790, 46.5370], [6.5786, 46.5378]];
+    }
+  });
+
+  assert.deepEqual(calls, [[[6.5804, 46.5362], [6.5786, 46.5378]]]);
+  assert.deepEqual(overlay.legs[0].coords, [[6.5804, 46.5362], [6.5790, 46.5370], [6.5786, 46.5378]]);
+  assert.equal(overlay.legs[0].failed, false);
+  assert.equal(overlay.failedCount, 0);
+});
+
+test('buildTransitRouteOverlay falls back to endpoints and marks failed walk geometry visibly', async () => {
+  const route = {
+    legs: [
+      {
+        type: 'walk',
+        mode: 'walk',
+        label: 'WALK',
+        from: 'Lausanne',
+        to: 'Office',
+        minutes: 8,
+        coords: [[6.6296, 46.5176], [6.6336, 46.5218]]
+      },
+      {
+        type: 'transit',
+        mode: 'B',
+        label: 'B21',
+        from: 'Stop A',
+        to: 'Stop B',
+        minutes: 12,
+        coords: [[6.6400, 46.5200]]
+      }
+    ]
+  };
+
+  const overlay = await buildTransitRouteOverlay(route, {
+    listingId: 'listing-4',
+    async resolveFootRoute() {
+      throw new Error('OSRM unavailable');
+    }
+  });
+
+  assert.equal(overlay.failedCount, 2);
+  assert.deepEqual(overlay.legs[0], {
+    kind: 'walk',
+    mode: 'walk',
+    label: 'WALK',
+    color: '#8a8377',
+    coords: [[6.6296, 46.5176], [6.6336, 46.5218]],
+    failed: true,
+    fromName: 'Lausanne',
+    toName: 'Office',
+    minutes: 8
+  });
+  assert.deepEqual(overlay.legs[1], {
+    kind: 'transit',
+    mode: 'B',
+    label: 'B21',
+    color: '#2c7be5',
+    coords: [[6.6400, 46.5200]],
+    failed: true,
+    fromName: 'Stop A',
+    toName: 'Stop B',
+    minutes: 12
+  });
+  assert.deepEqual(overlay.bounds, [[6.6296, 46.5176], [6.6400, 46.5218]]);
+});
 
 test('parseTransportDurationToMinutes parses Swiss transport durations', () => {
   assert.equal(parseTransportDurationToMinutes('00d00:35:00'), 35);
@@ -260,6 +426,12 @@ test('setCommuteSuccessFields writes compatibility and structured fields', () =>
       arrivalAt: '2026-05-04T07:44:00+0200',
       products: ['RE33'],
       legs: []
+    },
+    transitRouteOverlay: {
+      listingId: 'listing-1',
+      legs: [],
+      bounds: [[0, 0], [0, 0]],
+      failedCount: 0
     }
   });
 
@@ -268,6 +440,12 @@ test('setCommuteSuccessFields writes compatibility and structured fields', () =>
   assert.equal(listing.transitText, '42 min');
   assert.equal(listing.driveRouteStatus, 'ok');
   assert.equal(listing.transitRouteStatus, 'ok');
+  assert.deepEqual(listing.transitRouteOverlay, {
+    listingId: 'listing-1',
+    legs: [],
+    bounds: [[0, 0], [0, 0]],
+    failedCount: 0
+  });
   assert.deepEqual(listing.commuteWarnings, []);
 });
 
@@ -285,21 +463,30 @@ test('setCommuteSuccessFields preserves explicit route statuses', () => {
 
   assert.equal(listing.driveRouteStatus, 'cached-stale');
   assert.equal(listing.transitRouteStatus, 'cached-stale');
+  assert.equal(listing.transitRouteOverlay, null);
 });
 
 test('setCommuteFailureFields is visible and clearCommuteFields resets old values', () => {
-  const listing = { driveMinutes: 31, driveText: '31 min', transitText: '42 min', commuteWarnings: [] };
+  const listing = {
+    driveMinutes: 31,
+    driveText: '31 min',
+    transitText: '42 min',
+    transitRouteOverlay: { listingId: 'old', legs: [], bounds: [[0, 0], [0, 0]], failedCount: 0 },
+    commuteWarnings: []
+  };
   setCommuteFailureFields(listing, 'route-failed', 'Transport public indisponible');
   assert.equal(listing.driveMinutes, null);
   assert.equal(listing.driveText, '');
   assert.equal(listing.driveRouteStatus, 'route-failed');
   assert.equal(listing.transitRouteStatus, 'route-failed');
+  assert.equal(listing.transitRouteOverlay, null);
   assert.deepEqual(listing.commuteWarnings, ['Transport public indisponible']);
 
   clearCommuteFields(listing);
   assert.equal(listing.driveText, '');
   assert.equal(listing.transitText, '');
   assert.equal(listing.transitRouteStatus, 'missing-address');
+  assert.equal(listing.transitRouteOverlay, null);
 });
 
 test('projectRetainedCommuteFields clears stale retained commute when workplace geocode fails', () => {
@@ -314,6 +501,7 @@ test('projectRetainedCommuteFields clears stale retained commute when workplace 
     transitMinutes: 42,
     transitText: '42 min',
     transitRouteStatus: 'ok',
+    transitRouteOverlay: { listingId: 'old', legs: [], bounds: [[0, 0], [0, 0]], failedCount: 0 },
     commuteWarnings: []
   }, {
     visible: true,
@@ -328,6 +516,7 @@ test('projectRetainedCommuteFields clears stale retained commute when workplace 
   assert.equal(fields.driveMinutes, null);
   assert.equal(fields.driveRouteStatus, 'geocode-failed');
   assert.equal(fields.transitRouteStatus, 'geocode-failed');
+  assert.equal(fields.transitRouteOverlay, null);
   assert.match(fields.commuteWarnings[0], /Rue Etraz 4, Lausanne/);
 });
 
@@ -369,7 +558,8 @@ test('projectRetainedCommuteFields preserves retained commute when workplace mat
     driveMinutes: 31,
     driveRouteStatus: 'ok',
     transitMinutes: 42,
-    transitRouteStatus: 'ok'
+    transitRouteStatus: 'ok',
+    transitRouteOverlay: { listingId: 'listing-1', legs: [], bounds: [[0, 0], [0, 0]], failedCount: 0 }
   }, {
     visible: true,
     workAddress: 'Rue Etraz 4, Lausanne',
@@ -380,6 +570,12 @@ test('projectRetainedCommuteFields preserves retained commute when workplace mat
   assert.equal(fields.distanceKm, 12.4);
   assert.equal(fields.driveText, '31 min');
   assert.equal(fields.transitText, '42 min');
+  assert.deepEqual(fields.transitRouteOverlay, {
+    listingId: 'listing-1',
+    legs: [],
+    bounds: [[0, 0], [0, 0]],
+    failedCount: 0
+  });
   assert.equal(fields.distanceFromWorkAddress, 'Rue Etraz 4, Lausanne');
 });
 

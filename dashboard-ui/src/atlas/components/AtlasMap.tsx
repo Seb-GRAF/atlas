@@ -21,6 +21,7 @@ import { formatCHF } from './Mono';
 import { Icons } from '../icons';
 import type { RouteOverlay } from '../types';
 import type { Basemap } from '../mapPrefs';
+import { SWITZERLAND_MAX_BOUNDS, scopeSourceToSwitzerland } from './mapBounds';
 
 // Register the pmtiles:// protocol with maplibre-gl exactly once. The Protocol
 // instance keeps an internal LRU of opened archives, so re-registering on every
@@ -138,11 +139,11 @@ function buildVectorWarmStyle(): StyleSpecification {
     version: 8,
     glyphs: GLYPHS_URL,
     sources: {
-      protomaps: {
+      protomaps: scopeSourceToSwitzerland({
         type: 'vector',
         url: `pmtiles://${PMTILES_URL}`,
         attribution: VECTOR_ATTRIBUTION
-      }
+      })
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': COLOR.earth } },
@@ -385,17 +386,17 @@ function buildSatelliteStyle(): StyleSpecification {
     version: 8,
     glyphs: GLYPHS_URL,
     sources: {
-      imagery: {
+      imagery: scopeSourceToSwitzerland({
         type: 'raster',
         tiles: [SATELLITE_TILE_URL],
         tileSize: 256,
         attribution: SATELLITE_ATTRIBUTION,
         maxzoom: 19
-      },
-      protomaps: {
+      }),
+      protomaps: scopeSourceToSwitzerland({
         type: 'vector',
         url: `pmtiles://${PMTILES_URL}`
-      }
+      })
     },
     layers: [
       { id: 'background', type: 'background', paint: { 'background-color': '#0c1014' } },
@@ -832,6 +833,7 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
   const routeBadgeMarkersRef = useRef<Array<{ marker: Marker; el: HTMLDivElement; label: string; color: string }>>([]);
   const routeLayersAddedRef = useRef(false);
   const lastBoundsKeyRef = useRef<string | null>(null);
+  const appliedBasemapRef = useRef<Basemap>(basemap);
   const [loaded, setLoaded] = useState(false);
   const [renderTick, setRenderTick] = useState(0);
   // Bumped whenever the underlying style changes (e.g. vector ↔ satellite swap).
@@ -885,10 +887,17 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
       container: containerRef.current,
       style: buildStyleFor(basemap),
       center: [center.lon, center.lat],
-      zoom: center.zoom ?? DEFAULT_CENTER.zoom,
+      zoom:
+        basemap === 'relief'
+          ? Math.max(center.zoom ?? DEFAULT_CENTER.zoom, 15)
+          : center.zoom ?? DEFAULT_CENTER.zoom,
+      pitch: basemap === 'relief' ? 55 : 0,
+      bearing: basemap === 'relief' ? -17 : 0,
       attributionControl: { compact: true },
       cooperativeGestures: false,
-      maxZoom: 19
+      maxZoom: 19,
+      maxBounds: SWITZERLAND_MAX_BOUNDS,
+      renderWorldCopies: false
     });
 
     if (initialBounds) {
@@ -931,6 +940,8 @@ export const AtlasMap = forwardRef<AtlasMapHandle, AtlasMapProps>(function Atlas
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
+    if (appliedBasemapRef.current === basemap) return;
+    appliedBasemapRef.current = basemap;
     routeLayersAddedRef.current = false;
     map.setStyle(buildStyleFor(basemap), { diff: false });
     const onStyleData = () => {

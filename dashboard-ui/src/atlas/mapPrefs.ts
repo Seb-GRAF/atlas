@@ -5,7 +5,7 @@ const STORAGE_KEY = 'atlas-basemap';
 export function loadBasemap(): Basemap {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (raw === 'satellite' || raw === 'relief') return raw;
+    if (raw === 'relief') return raw;
     return 'vector';
   } catch {
     return 'vector';
@@ -14,6 +14,10 @@ export function loadBasemap(): Basemap {
 
 export function saveBasemap(value: Basemap) {
   try {
+    if (value === 'satellite') {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return;
+    }
     window.localStorage.setItem(STORAGE_KEY, value);
   } catch {
     // Storage unavailable (private mode, quota) — selection just won't persist.
